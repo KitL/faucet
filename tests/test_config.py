@@ -21,11 +21,11 @@ srcdir = '../src/ryu_faucet/org/onfsdn/faucet'
 sys.path.insert(0, os.path.abspath(os.path.join(testdir, srcdir)))
 
 import unittest
-from dp import DP
+from config import dp_parser
 
 class DistConfigTestCase(unittest.TestCase):
     def setUp(self):
-        self.dp = DP.parser('config/testconfig.yaml')
+        self.dp = dp_parser('config/testconfig.yaml', 'test_config')
 
     def test_dps(self):
         # confirm that DPIDs match

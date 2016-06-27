@@ -19,9 +19,8 @@ import os, signal, logging
 
 from logging.handlers import TimedRotatingFileHandler
 
-from valve import valve_factory
+from config import valve_parser
 from util import kill_on_exception
-from dp import DP
 
 from ryu.base import app_manager
 from ryu.controller import ofp_event
@@ -104,8 +103,7 @@ class Faucet(app_manager.RyuApp):
         exc_logger.propagate = 1
         exc_logger.setLevel(logging.CRITICAL)
 
-        dp = self.parse_config(self.config_file, self.logname)
-        self.valve = valve_factory(dp)
+        self.valve = valve_parser(self.config_file, self.logname)
         if self.valve is None:
             self.logger.error("Hardware type not supported")
 
@@ -124,16 +122,6 @@ class Faucet(app_manager.RyuApp):
             self.send_event('Faucet', EventFaucetHostExpire())
             hub.sleep(5)
 
-    def parse_config(self, config_file, log_name):
-        new_dp = DP.parser(config_file, log_name)
-        if new_dp:
-            try:
-                new_dp.sanity_check()
-                return new_dp
-            except AssertionError:
-                self.logger.exception("Error in config file:")
-        return None
-
     def send_flow_msgs(self, dp, flow_msgs):
         self.valve.ofchannel_log(flow_msgs)
         for flow_msg in flow_msgs:
@@ -147,7 +135,7 @@ class Faucet(app_manager.RyuApp):
     @set_ev_cls(EventFaucetReconfigure, MAIN_DISPATCHER)
     def reload_config(self, ev):
         new_config_file = os.getenv('FAUCET_CONFIG', self.config_file)
-        new_dp = self.parse_config(new_config_file, self.logname)
+        new_dp = valve_parser(new_config_file, self.logname)
         if new_dp:
             flowmods = self.valve.reload_config(new_dp)
             ryudp = self.dpset.get(new_dp.dp_id)

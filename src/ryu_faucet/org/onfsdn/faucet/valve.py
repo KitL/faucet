@@ -52,7 +52,7 @@ class HostCacheEntry(object):
         self.cache_time = now
 
 
-def valve_factory(dp):
+def valve_factory(hardware):
     """Return a Valve object based dp's hardware configuration field.
 
     Arguments:
@@ -66,8 +66,8 @@ def valve_factory(dp):
         'ZodiacFX': Valve,
     }
 
-    if dp.hardware in SUPPORTED_HARDWARE:
-        return SUPPORTED_HARDWARE[dp.hardware](dp)
+    if hardware in SUPPORTED_HARDWARE:
+        return SUPPORTED_HARDWARE[hardware]
     else:
         return None
 
@@ -82,9 +82,9 @@ class Valve(object):
 
     FAUCET_MAC = '0e:00:00:00:00:01'
 
-    def __init__(self, dp, logname='faucet', *args, **kwargs):
+    def __init__(self, dp, logname, *args, **kwargs):
         self.dp = dp
-        self.logger = logging.getLogger(logname)
+        self.logger = logging.getLogger(logname + '.valve')
         self.ofchannel_logger = None
 
     def switch_features(self, dp_id, msg):

@@ -14,8 +14,6 @@
 # limitations under the License.
 
 import copy
-import logging
-import yaml
 
 from vlan import VLAN
 from port import Port
@@ -31,55 +29,57 @@ class DP(object):
     running = False
     influxdb_stats = False
 
-    def __init__(self, dp_id, logname):
+    # Values that are set to None will be set using set_defaults
+    # they are included here for config checking
+    defaults = {
+        'table_offset': 0,
+        # The table for internally associating vlans
+        'vlan_table': None,
+        'acl_table': None,
+        'eth_src_table': None,
+        'eth_dst_table': None,
+        'flood_table': None,
+        # How much to offset default priority by
+        'priority_offset': 0,
+        # Some priority values
+        'lowest_priority': None,
+        'low_priority': None,
+        'high_priority': None,
+        'highest_priority': None,
+        # Identification cookie value to allow for multiple controllers to
+        # control the same datapath
+        'cookie': 1524372928,
+        # inactive MAC timeout
+        'timeout': 300,
+        # Name for this dp, used for stats reporting
+        'name': None,
+        # description, strictly informational
+        'description': None,
+        # The hardware maker (for chosing an openflow driver)
+        'hardware': 'Open_vSwitch',
+        # ARP and neighbor timeout (seconds)
+        'arp_neighbor_timeout': 500,
+        # OF channel log
+        'ofchannel_log': None,
+        }
+
+    def __init__(self, dp_id, conf):
         self.dp_id = dp_id
         self.acls = {}
         self.vlans = {}
         self.ports = {}
         self.mirror_from_port = {}
         self.acl_in = {}
-        self.logger = logging.getLogger(logname)
+        self.update(conf)
         self.set_defaults()
 
-    @classmethod
-    def parser(cls, config_file, logname=__name__):
-        logger = logging.getLogger(logname)
-        try:
-            with open(config_file, 'r') as stream:
-                conf = yaml.load(stream)
-        except yaml.YAMLError as ex:
-            mark = ex.problem_mark
-            errormsg = "Error in file: {0} at ({1}, {2})".format(
-                config_file,
-                mark.line + 1,
-                mark.column + 1)
-            logger.error(errormsg)
-            return None
-
-        if 'dp_id' not in conf:
-            errormsg = "dp_id not configured in file: {0}".format(config_file)
-            logger.error(errormsg)
-            return None
-
-        dp = DP(conf['dp_id'], logname)
-
-        interfaces = conf.pop('interfaces', {})
-        vlans = conf.pop('vlans', {})
-        acls = conf.pop('acls', {})
-        dp.__dict__.update(conf)
-        dp.set_defaults()
-
-        for vid, vlan_conf in vlans.iteritems():
-            dp.add_vlan(vid, vlan_conf)
-        for port_num, port_conf in interfaces.iteritems():
-            dp.add_port(port_num, port_conf)
-        for acl_num, acl_conf in acls.iteritems():
-            dp.add_acl(acl_num, acl_conf)
-
-
-        return dp
+    def update(self, dictionary):
+        # TODO: it would be good to warn on keys that are set but arent in
+        # defaults
+        self.__dict__.update(dictionary)
 
     def sanity_check(self):
+        # TODO: this shouldnt use asserts
         assert 'dp_id' in self.__dict__
         assert isinstance(self.dp_id, (int, long))
         for vid, vlan in self.vlans.iteritems():
@@ -89,63 +89,26 @@ class DP(object):
         for portnum, port in self.ports.iteritems():
             assert isinstance(portnum, int)
             assert isinstance(port, Port)
-        assert isinstance(self.monitor_ports, bool)
-        assert isinstance(self.monitor_ports_file, basestring)
-        assert isinstance(self.monitor_ports_interval, int)
-        assert isinstance(self.monitor_flow_table, bool)
-        assert isinstance(self.monitor_flow_table_file, basestring)
-        assert isinstance(self.monitor_flow_table_interval, int)
-        assert isinstance(self.influxdb_stats, bool)
+
+    def _set_default(self, key, value):
+        if key not in self.__dict__ or self.__dict__[key] is None:
+            self.__dict__[key] = value
 
     def set_defaults(self):
-        # Offset for tables used by faucet
-        self.__dict__.setdefault('table_offset', 0)
-        # The table for internally associating vlans
-        self.__dict__.setdefault('vlan_table', self.table_offset)
-        # Table for applying ACLs.
-        self.__dict__.setdefault('acl_table', self.table_offset + 1)
-        # The table for checking eth src addresses are known
-        self.__dict__.setdefault('eth_src_table', self.acl_table + 1)
-        # The table for matching eth dst and applying unicast actions
-        self.__dict__.setdefault('eth_dst_table', self.eth_src_table + 1)
-        # The table for applying broadcast actions
-        self.__dict__.setdefault('flood_table', self.eth_dst_table + 1)
-        # How much to offset default priority by
-        self.__dict__.setdefault('priority_offset', 0)
-        # Some priority values
-        self.__dict__.setdefault('lowest_priority', self.priority_offset)
-        self.__dict__.setdefault('low_priority', self.priority_offset + 9000)
-        self.__dict__.setdefault('high_priority', self.low_priority + 1)
-        self.__dict__.setdefault('highest_priority', self.high_priority + 98)
-        # Identification cookie value to allow for multiple controllers to
-        # control the same datapath
-        self.__dict__.setdefault('cookie', 1524372928)
-        # inactive MAC timeout
-        self.__dict__.setdefault('timeout', 300)
-        # enable port stats monitoring?
-        self.__dict__.setdefault('monitor_ports', False)
-        # File for port stats logging
-        self.__dict__.setdefault('monitor_ports_file', 'logfile.log')
-        # Stats reporting interval (in seconds)
-        self.__dict__.setdefault('monitor_ports_interval', 30)
-        # Enable flow table monitoring?
-        self.__dict__.setdefault('monitor_flow_table', False)
-        # File for flow table logging
-        self.__dict__.setdefault('monitor_flow_table_file', 'logfile.log')
-        # Stats reporting interval
-        self.__dict__.setdefault('monitor_flow_table_interval', 30)
-        # Name for this dp, used for stats reporting
-        self.__dict__.setdefault('name', str(self.dp_id))
-        # description, strictly informational
-        self.__dict__.setdefault('description', self.name)
-        # The hardware maker (for chosing an openflow driver)
-        self.__dict__.setdefault('hardware', 'Open_vSwitch')
-        # Whether to use influxdb for stats
-        self.__dict__.setdefault('influxdb_stats', False)
-        # ARP and neighbor timeout (seconds)
-        self.__dict__.setdefault('arp_neighbor_timeout', 500)
-        # OF channel log
-        self.__dict__.setdefault('ofchannel_log', None)
+        for key, value in self.defaults.iteritems():
+            self._set_default(key, value)
+        # fix special cases
+        self._set_default('vlan_table', self.table_offset)
+        self._set_default('acl_table', self.table_offset + 1)
+        self._set_default('eth_src_table', self.acl_table + 1)
+        self._set_default('eth_dst_table', self.eth_src_table + 1)
+        self._set_default('flood_table', self.eth_dst_table + 1)
+        self._set_default('lowest_priority', self.priority_offset)
+        self._set_default('low_priority', self.priority_offset + 9000)
+        self._set_default('high_priority', self.low_priority + 1)
+        self._set_default('highest_priority', self.high_priority + 98)
+        self._set_default('name', str(self.dp_id))
+        self._set_default('description', self.name)
 
     def add_acl(self, acl_num, acl_conf=None):
         if acl_conf is not None:
