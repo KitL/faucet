@@ -107,7 +107,8 @@ class Valve(object):
                     logger_handler = TimedRotatingFileHandler(
                         self.dp.ofchannel_log,
                         when='midnight')
-                    log_fmt = '%(asctime)s %(name)-6s %(levelname)-8s %(message)s'
+                    log_fmt = ('%(asctime)s %(name)-6s '
+                        '%(levelname)-8s %(message)s')
                     logger_handler.setFormatter(
                         logging.Formatter(log_fmt, '%b %d %H:%M:%S'))
                     self.ofchannel_logger.addHandler(logger_handler)
@@ -197,7 +198,7 @@ class Valve(object):
     def ignore_dpid(self, dp_id):
         """Ignore all DPIDs except the DPID configured."""
         if dp_id != self.dp.dp_id:
-            self.logger.error("Unknown dpid:%s", dp_id)
+            self.logger.error('Unknown dpid:%s', dp_id)
             return True
         return False
 
@@ -480,12 +481,27 @@ class Valve(object):
                 acl_inst = []
                 match_dict = {}
                 for attrib, attrib_value in rule_conf.iteritems():
-                    if attrib == "actions":
+                    if attrib == 'actions':
                         if 'mirror' in attrib_value:
                             port_no = attrib_value['mirror']
                             acl_inst.append(
                                     self.apply_actions([
                                     parser.OFPActionOutput(port_no)]))
+                        # if output selected, output packet now
+                        # and exit pipeline.
+                        if 'output' in attrib_value:
+                            output_dict = attrib_value['output']
+                            output_actions = []
+                            # if destination rewriting selected, rewrite it.
+                            if 'dl_dst' in output_dict:
+                                output_actions.append(
+                                    parser.OFPActionSetField(
+                                        eth_dst=output_dict['dl_dst']))
+                            # output to port
+                            port_no = output_dict['port']
+                            output_actions.append( parser.OFPActionOutput(port_no))
+                            acl_inst.append(self.apply_actions(output_actions))
+                            continue
                         if attrib_value['allow'] == 1:
                             acl_inst.append(acl_allow_inst)
                         continue
@@ -514,6 +530,7 @@ class Valve(object):
             controller_ip_host = ipaddr.IPNetwork(
                 '/'.join((str(controller_ip.ip),
                           str(controller_ip.max_prefixlen))))
+            max_prefixlen = controller_ip_host.prefixlen
             if controller_ip_host.version == 4:
                 ofmsgs.append(self.valve_flowcontroller(
                     self.dp.eth_src_table,
@@ -521,7 +538,7 @@ class Valve(object):
                          eth_type=ether.ETH_TYPE_ARP,
                          nw_dst=controller_ip_host,
                          vlan=vlan),
-                    priority=self.dp.highest_priority))
+                    priority=self.dp.highest_priority + max_prefixlen))
                 ofmsgs.append(self.valve_flowcontroller(
                     self.dp.eth_src_table,
                     self.valve_in_match(
@@ -531,7 +548,7 @@ class Valve(object):
                         nw_proto=inet.IPPROTO_ICMP,
                         nw_src=controller_ip,
                         nw_dst=controller_ip_host),
-                    priority=self.dp.highest_priority))
+                    priority=self.dp.highest_priority + max_prefixlen))
             else:
                 ofmsgs.append(self.valve_flowcontroller(
                     self.dp.eth_src_table,
@@ -541,7 +558,7 @@ class Valve(object):
                          nw_proto=inet.IPPROTO_ICMPV6,
                          ipv6_nd_target=controller_ip_host,
                          icmpv6_type=icmpv6.ND_NEIGHBOR_SOLICIT),
-                    priority=self.dp.highest_priority))
+                    priority=self.dp.highest_priority + max_prefixlen))
                 ofmsgs.append(self.valve_flowcontroller(
                     self.dp.eth_src_table,
                     self.valve_in_match(
@@ -550,7 +567,7 @@ class Valve(object):
                          vlan=vlan,
                          nw_proto=inet.IPPROTO_ICMPV6,
                          icmpv6_type=icmpv6.ND_NEIGHBOR_ADVERT),
-                    priority=self.dp.highest_priority))
+                    priority=self.dp.highest_priority + max_prefixlen))
                 ofmsgs.append(self.valve_flowcontroller(
                     self.dp.eth_src_table,
                     self.valve_in_match(
@@ -559,7 +576,7 @@ class Valve(object):
                          nw_proto=inet.IPPROTO_ICMPV6,
                          nw_dst=controller_ip_host,
                          icmpv6_type=icmpv6.ICMPV6_ECHO_REQUEST),
-                    priority=self.dp.highest_priority))
+                    priority=self.dp.highest_priority + max_prefixlen))
         return ofmsgs
 
     def port_add_vlan_untagged(self, port, vlan, forwarding_table, mirror_act):
@@ -646,14 +663,14 @@ class Valve(object):
 
         # if this port is used as mirror port in any acl - drop input packets
         for acl in self.dp.acls.values():
-             for rule_conf in acl:
-                 for attrib, attrib_value in rule_conf.iteritems():
-                     if attrib == "actions":
-                         if 'mirror' in attrib_value:
-                             port_no = attrib_value['mirror']
-                             ofmsgs.append(self.valve_flowdrop(
-                                 self.dp.vlan_table,
-                                 self.valve_in_match(in_port=port_no)))
+            for rule_conf in acl:
+                for attrib, attrib_value in rule_conf.iteritems():
+                    if attrib == 'actions':
+                        if 'mirror' in attrib_value:
+                            port_no = attrib_value['mirror']
+                            ofmsgs.append(self.valve_flowdrop(
+                                self.dp.vlan_table,
+                                self.valve_in_match(in_port=port_no)))
 
         if port_num in self.dp.mirror_from_port.values():
             # this is a mirror port - drop all input packets
@@ -748,7 +765,7 @@ class Valve(object):
             in_match = self.valve_in_match(
                 vlan=vlan, eth_type=eth_type,
                 nw_dst=ip_dst, eth_dst=self.FAUCET_MAC)
-            priority = self.dp.highest_priority + 1
+            priority = self.dp.highest_priority + ipaddr.IPNetwork(ip_dst).prefixlen
             if is_updated:
                 self.logger.info('Updating next hop for route %s via %s (%s)',
                         ip_dst, ip_gw, eth_dst)
@@ -865,7 +882,7 @@ class Valve(object):
                     flowmods.extend(
                         self.add_resolved_route(
                             ether.ETH_TYPE_IPV6, vlan, vlan.nd_cache,
-                            ip_gw, ip_dst, eth_src,is_updated))
+                            ip_gw, ip_dst, eth_src, is_updated))
         elif icmpv6_pkt.type_ == icmpv6.ICMPV6_ECHO_REQUEST:
             dst = ipv6_pkt.dst
             ipv6_reply = ipv6.ipv6(
@@ -922,7 +939,8 @@ class Valve(object):
         # but the src table rule is still being hit intermittantly the switch
         # will flood packets to that dst and not realise it needs to relearn
         # the rule
-        # NB: Must be lower than highest priority otherwise it can match flows destined to controller
+        # NB: Must be lower than highest priority otherwise it can match
+        # flows destined to controller
         ofmsgs.append(self.valve_flowmod(
             self.dp.eth_src_table,
             self.valve_in_match(in_port=in_port, vlan=vlan, eth_src=eth_src),
@@ -1113,7 +1131,6 @@ class Valve(object):
         return flowmods
 
     def resolve_gateways(self):
-        # TODO: implement longest prefix match priority
         if not self.dp.running:
             return []
         flowmods = []

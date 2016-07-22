@@ -18,6 +18,7 @@
 # * iputils-ping
 # * netcat-openbsd
 # * tcpdump
+# * exabgp
 
 import ipaddr
 import os
@@ -77,6 +78,16 @@ class FAUCET(Controller):
                             command=command,
                             cargs=cargs, **kwargs)
 
+class Gauge(Controller):
+
+    def __init__(self, name, cdir=FAUCET_DIR,
+                 command='ryu-manager gauge.py',
+                 cargs='--ofp-tcp-listen-port=%s --verbose --use-stderr',
+                 **kwargs):
+        Controller.__init__(self, name, cdir=cdir,
+                            command=command,
+                            cargs=cargs, **kwargs)
+
 
 class FaucetSwitchTopo(Topo):
 
@@ -107,26 +118,71 @@ class FaucetTest(unittest.TestCase):
         self.tmpdir = tempfile.mkdtemp()
         os.environ['FAUCET_CONFIG'] = os.path.join(self.tmpdir,
              'faucet.yaml')
+        os.environ['GAUGE_CONFIG'] = os.path.join(self.tmpdir,
+             'gauge.conf')
+        #open(os.environ['GAUGE_CONFIG'], 'w').write(
+        #     os.environ['FAUCET_CONFIG'])
         os.environ['FAUCET_LOG'] = os.path.join(self.tmpdir,
              'faucet.log')
         os.environ['FAUCET_EXCEPTION_LOG'] = os.path.join(self.tmpdir,
              'faucet-exception.log')
+        os.environ['GAUGE_LOG'] = os.path.join(self.tmpdir,
+             'gauge.log')
+        os.environ['GAUGE_EXCEPTION_LOG'] = os.path.join(self.tmpdir,
+             'gauge-exception.log')
         self.debug_log_path = os.path.join(self.tmpdir, 'ofchannel.log')
+        self.monitor_ports_file = os.path.join(self.tmpdir,
+             'ports.txt')
+        self.monitor_flow_table_file = os.path.join(self.tmpdir,
+             'flow.txt')
         self.CONFIG = '\n'.join((
-            self.get_config_header(DPID, HARDWARE),
+            self.get_config_header(
+                DPID, HARDWARE, self.monitor_ports_file, self.monitor_flow_table_file),
             self.CONFIG % PORT_MAP,
             'ofchannel_log: "%s"' % self.debug_log_path))
+        self.GAUGE_CONFIG = self.get_gauge_config(
+            DPID,
+            os.environ['FAUCET_CONFIG'],
+            self.monitor_ports_file,
+            self.monitor_flow_table_file,
+            )
+        open(os.environ['GAUGE_CONFIG'], 'w').write(
+             self.GAUGE_CONFIG)
         open(os.environ['FAUCET_CONFIG'], 'w').write(self.CONFIG)
         self.net = None
         self.topo = None
 
-    def get_config_header(self, dpid, hardware):
+    def get_gauge_config(self, dp_id, faucet_config, monitor_ports_file,
+                         monitor_flow_table_file):
+        return '''
+---
+valve_configs:
+    - {1}
+gauges:
+    - dps: [{0}]
+      gauge_type: 'port_stats'
+      output_file: '{2}'
+      interval: 2
+    - dps: [{0}]
+      gauge_type: 'flow_table'
+      output_file: '{3}'
+      interval: 2
+'''.format(dp_id, faucet_config, monitor_ports_file, monitor_flow_table_file)
+
+    def get_config_header(self, dpid, hardware,
+                          monitor_ports_files, monitor_flow_table_file):
         return '''
 ---
 dp_id: 0x%s
 name: "faucet-1"
 hardware: "%s"
-''' % (dpid, hardware)
+monitor_ports: True
+monitor_ports_interval: 2
+monitor_ports_file: "%s"
+monitor_flow_table: True
+monitor_flow_table_interval: 2
+monitor_flow_table_file: "%s"
+''' % (dpid, hardware, monitor_ports_files, monitor_flow_table_file)
 
     def attach_physical_switch(self):
         switch = self.net.switches[0]
@@ -151,6 +207,11 @@ hardware: "%s"
 
     def start_net(self):
         self.net = Mininet(self.topo, controller=FAUCET)
+        # TODO: when running software only, also test gauge.
+        if not SWITCH_MAP:
+            faucet_port = self.net.controllers[0].port
+            self.net.addController(
+                name='gauge', controller=Gauge, port=faucet_port + 1)
         self.net.start()
         if SWITCH_MAP:
             self.attach_physical_switch()
@@ -177,9 +238,9 @@ hardware: "%s"
     def one_ipv4_controller_ping(self, host):
         self.one_ipv4_ping(host, self.CONTROLLER_IPV4)
 
-    def one_ipv6_ping(self, host, dst):
+    def one_ipv6_ping(self, host, dst, timeout=2):
         # TODO: retry our one ping. We should not have to retry.
-        for _ in range(2):
+        for _ in range(timeout):
             ping_result = host.cmd('ping6 -c1 %s' % dst)
             if re.search(self.ONE_GOOD_PING, ping_result):
                 return
@@ -188,11 +249,13 @@ hardware: "%s"
     def one_ipv6_controller_ping(self, host):
         self.one_ipv6_ping(host, self.CONTROLLER_IPV6)
 
-    def wait_until_matching_flow(self, exp_flow, timeout=5):
+    def wait_until_matching_flow(self, exp_flow, timeout=10):
         for _ in range(timeout):
-            dump_flows = json.loads(requests.get(RYU_ADDR+'/stats/flow/%s' % DPID).text)[DPID]
+            dump_flows = json.loads(requests.get(
+            RYU_ADDR+'/stats/flow/%s' % DPID).text)[DPID]
             for flow in dump_flows:
-                # Re-transform the dictioray into str to re-use the verify_ipv*_routing methods
+                # Re-transform the dictioray into str to re-use
+                # the verify_ipv*_routing methods
                 flow_str = json.dumps(flow)
                 if re.search(exp_flow, flow_str):
                     return
@@ -280,6 +343,10 @@ vlans:
 
     def test_untagged(self):
         self.assertEquals(0, self.net.pingAll())
+        # TODO: a smoke test only - are flow/port stats accumulating
+        if not SWITCH_MAP:
+           assert os.stat(self.monitor_ports_file).st_size > 0
+           assert os.stat(self.monitor_flow_table_file).st_size > 0
 
 
 class FaucetTaggedAndUntaggedVlanTest(FaucetTest):
@@ -385,6 +452,11 @@ vlans:
     100:
         description: "untagged"
         controller_ips: ["10.0.0.254/24"]
+        bgp_port: 9179
+        bgp_as: 1
+        bgp_routerid: "1.1.1.1"
+        bgp_neighbor_address: "127.0.0.1"
+        bgp_neighbor_as: 2
         routes:
             - route:
                 ip_dst: "10.0.1.0/24"
@@ -398,6 +470,30 @@ vlans:
 """
 
     def test_untagged(self):
+        exabgp_conf = """
+group test {
+  process test {
+    encoder json;
+    neighbor-changes;
+    receive-routes;
+    run /bin/cat;
+  }
+  router-id 2.2.2.2;
+  neighbor 127.0.0.1 {
+    passive;
+    local-address 127.0.0.1;
+    peer-as 1;
+    local-as 2;
+  }
+}
+"""
+	exabgp_conf_file = os.path.join(self.tmpdir, 'exabgp.conf')
+        exabgp_log = os.path.join(self.tmpdir, 'exabgp.log')
+        open(exabgp_conf_file, 'w').write(exabgp_conf)
+        controller = self.net.controllers[0]
+        controller.cmd(
+            'env exabgp.tcp.bind="127.0.0.1" exabgp.tcp.port=179 exabgp '
+            '%s -d 2> /dev/null > %s &' % (exabgp_conf_file, exabgp_log))
         host_pair = self.net.hosts[:2]
         first_host, second_host = host_pair
         first_host_routed_ip = ipaddr.IPv4Network('10.0.1.1/24')
@@ -416,6 +512,17 @@ vlans:
         self.verify_ipv4_routing(
             first_host, first_host_routed_ip,
             second_host, second_host_routed_ip2)
+        # exabgp should have received our BGP updates
+        for i in range(30):
+            updates = controller.cmd(
+                'grep UPDATE %s |grep -Eo "\S+ next-hop \S+"' % exabgp_log)
+            if updates:
+                break
+            time.sleep(1)
+        assert re.search('10.0.0.0/24 next-hop 10.0.0.254', updates)
+        assert re.search('10.0.1.0/24 next-hop 10.0.0.1', updates)
+        assert re.search('10.0.2.0/24 next-hop 10.0.0.2', updates)
+        assert re.search('10.0.2.0/24 next-hop 10.0.0.2', updates)
 
 
 class FaucetUntaggedNoVLanUnicastFloodTest(FaucetUntaggedTest):
@@ -670,6 +777,58 @@ acls:
             '%s: ICMP echo reply' % first_host.IP(), tcpdump_txt))
 
 
+class FaucetUntaggedOutputTest(FaucetUntaggedTest):
+
+    CONFIG = """
+interfaces:
+    %(port_1)d:
+        native_vlan: 100
+        description: "b1"
+        acl_in: 1
+    %(port_2)d:
+        native_vlan: 100
+        description: "b2"
+    %(port_3)d:
+        native_vlan: 100
+        description: "b3"
+    %(port_4)d:
+        native_vlan: 100
+        description: "b4"
+vlans:
+    100:
+        description: "untagged"
+        unicast_flood: False
+acls:
+    %(port_1)d:
+        - rule:
+            dl_dst: "01:02:03:04:05:06"
+            actions:
+                output:
+                    dl_dst: "06:06:06:06:06:06"
+                    port: %(port_2)d
+"""
+
+    def test_untagged(self):
+        first_host = self.net.hosts[0]
+        second_host = self.net.hosts[1]
+        # we expected to see the rewritten address.
+        tcpdump_filter = 'ether dst %s and icmp' % '06:06:06:06:06:06'
+        tcpdump_out = second_host.popen(
+            'timeout 10s tcpdump -e -n -v -c 2 -U %s' % tcpdump_filter)
+        # wait for tcpdump to start
+        time.sleep(1)
+        popens = {second_host: tcpdump_out}
+        first_host.cmd('arp -s %s %s' % (second_host.IP(), '01:02:03:04:05:06'))
+        first_host.cmd('ping -c1  %s' % second_host.IP())
+        tcpdump_txt = ''
+        for host, line in pmonitor(popens):
+            if host == second_host:
+                tcpdump_txt += line.strip()
+        self.assertFalse(tcpdump_txt == '')
+        self.assertTrue(re.search(
+            '%s: ICMP echo request' % second_host.IP(), tcpdump_txt))
+
+
 class FaucetUntaggedMirrorTest(FaucetUntaggedTest):
 
     CONFIG = """
@@ -846,6 +1005,11 @@ vlans:
     100:
         description: "untagged"
         controller_ips: ["fc00::1:254/112"]
+        bgp_port: 9179
+        bgp_as: 1
+        bgp_routerid: "1.1.1.1"
+        bgp_neighbor_address: "::1"
+        bgp_neighbor_as: 2
         routes:
             - route:
                 ip_dst: "fc00::10:0/112"
@@ -859,6 +1023,30 @@ vlans:
 """
 
     def test_untagged(self):
+        exabgp_conf = """
+group test {
+  process test {
+    encoder json;
+    neighbor-changes;
+    receive-routes;
+    run /bin/cat;
+  }
+  router-id 2.2.2.2;
+  neighbor ::1 {
+    passive;
+    local-address ::1;
+    peer-as 1;
+    local-as 2;
+  }
+}
+"""
+        exabgp_conf_file = os.path.join(self.tmpdir, 'exabgp.conf')
+        exabgp_log = os.path.join(self.tmpdir, 'exabgp.log')
+        open(exabgp_conf_file, 'w').write(exabgp_conf)
+        controller = self.net.controllers[0]
+        controller.cmd(
+            'env exabgp.tcp.bind="::1" exabgp.tcp.port=179 exabgp '
+            '%s -d 2> /dev/null > %s &' % (exabgp_conf_file, exabgp_log))
         host_pair = self.net.hosts[:2]
         first_host, second_host = host_pair
         first_host_ip = ipaddr.IPv6Network('fc00::1:1/112')
@@ -879,6 +1067,17 @@ vlans:
         self.verify_ipv6_routing(
             first_host, first_host_ip, first_host_routed_ip,
             second_host, second_host_ip, second_host_routed_ip2)
+        # exabgp should have received our BGP updates
+        for i in range(30):
+            updates = controller.cmd(
+                'grep UPDATE %s |grep -Eo "\S+ next-hop \S+"' % exabgp_log)
+            if updates:
+                break
+            time.sleep(1)
+        assert re.search('fc00::1:0/112 next-hop fc00::1:254', updates)
+        assert re.search('fc00::10:0/112 next-hop fc00::1:1', updates)
+        assert re.search('fc00::20:0/112 next-hop fc00::1:2', updates)
+        assert re.search('fc00::30:0/112 next-hop fc00::1:2', updates)
 
 
 class FaucetTaggedIPv6RouteTest(FaucetTaggedTest):

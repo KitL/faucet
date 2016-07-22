@@ -16,6 +16,7 @@
 # limitations under the License.
 
 import os, signal, logging
+import ipaddr
 
 from logging.handlers import TimedRotatingFileHandler
 
@@ -23,18 +24,18 @@ from config import valve_parser
 from util import kill_on_exception
 
 from ryu.base import app_manager
-from ryu.controller import ofp_event
-from ryu.controller import dpset
 from ryu.controller.handler import CONFIG_DISPATCHER
 from ryu.controller.handler import MAIN_DISPATCHER
 from ryu.controller.handler import set_ev_cls
+from ryu.controller import dpset
 from ryu.controller import event
-from ryu.ofproto import ofproto_v1_3, ether
-from ryu.lib.packet import packet
-from ryu.lib.packet import ethernet
-from ryu.lib.packet import vlan
+from ryu.controller import ofp_event
 from ryu.lib import hub
-
+from ryu.lib.packet import ethernet
+from ryu.lib.packet import packet
+from ryu.lib.packet import vlan
+from ryu.ofproto import ofproto_v1_3, ether
+from ryu.services.protocols.bgp.bgpspeaker import BGPSpeaker
 
 class EventFaucetReconfigure(event.EventBase):
     pass
@@ -105,12 +106,44 @@ class Faucet(app_manager.RyuApp):
 
         self.valve = valve_parser(self.config_file, self.logname)
         if self.valve is None:
-            self.logger.error("Hardware type not supported")
+            self.logger.error('Hardware type not supported')
 
         self.gateway_resolve_request_thread = hub.spawn(
             self.gateway_resolve_request)
         self.host_expire_request_thread = hub.spawn(
             self.host_expire_request)
+
+        self.bgp_speakers = {}
+        self.reset_bgp()
+
+    def reset_bgp(self):
+        # TODO: advertise controller IPs and static routes only;
+        # port status changes and receiving routes not yet
+        # implemented.
+        for bgp_speaker in self.bgp_speakers.itervalues():
+            bgp_speaker.shutdown()
+        for vlan_id, vlan in self.valve.dp.vlans.iteritems():
+            if vlan.bgp_as:
+                 bgp_speaker = BGPSpeaker(
+                     as_number=vlan.bgp_as,
+                     router_id=vlan.bgp_routerid,
+                     bgp_server_port=vlan.bgp_port)
+                 bgp_speaker.neighbor_add(
+                     address=vlan.bgp_neighbor_address,
+                     remote_as=vlan.bgp_neighbor_as)
+                 for controller_ip in vlan.controller_ips:
+                     prefix=ipaddr.IPNetwork(
+                         '/'.join((str(controller_ip.ip),
+                              str(controller_ip.prefixlen))))
+                     bgp_speaker.prefix_add(
+                         prefix=str(prefix),
+                         next_hop=controller_ip.ip)
+                 for route_table in (vlan.ipv4_routes, vlan.ipv6_routes):
+                     for ip_dst, ip_gw in route_table.iteritems():
+                         bgp_speaker.prefix_add(
+                             prefix=str(ip_dst),
+                             next_hop=str(ip_gw))
+                 self.bgp_speakers[vlan_id] = bgp_speaker
 
     def gateway_resolve_request(self):
         while True:
@@ -140,6 +173,7 @@ class Faucet(app_manager.RyuApp):
             flowmods = self.valve.reload_config(new_dp)
             ryudp = self.dpset.get(new_dp.dp_id)
             self.send_flow_msgs(ryudp, flowmods)
+            self.reset_bgp()
 
     @set_ev_cls(EventFaucetResolveGateways, MAIN_DISPATCHER)
     def resolve_gateways(self, ev):

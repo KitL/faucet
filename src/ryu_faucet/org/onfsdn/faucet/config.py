@@ -39,13 +39,74 @@ def read_config(config_file, logname):
         return None
     return conf
 
+    @classmethod
+    def _parser_v2(cls, conf, config_file, logname):
+        logger = logging.getLogger(logname)
+
+        if 'dps' not in conf:
+            logger.error("dps not configured in file: {0}".format(config_file))
+            return None
+
+        vlans = conf.pop('vlans', {})
+        acls = conf.pop('acls', {})
+
+        dps = []
+        for dp_id, cf in conf['dps'].iteritems():
+            dp = DP(dp_id, logname)
+            interfaces = cf.pop('interfaces', {})
+            dp.__dict__.update(cf)
+            dp.set_defaults()
+
+            for vid, vlan_conf in vlans.iteritems():
+                dp.add_vlan(vid, vlan_conf)
+            for port_num, port_conf in interfaces.iteritems():
+                dp.add_port(port_num, port_conf)
+            for acl_num, acl_conf in acls.iteritems():
+                dp.add_acl(acl_num, acl_conf)
+
+            dps.append(dp)
+
+        if dps:
+            return dps[0]
+        else:
+            logger.error("dps configured with no elements in file: {0}".format(config_file))
+            return None
+
+    @classmethod
+    def parser(cls, config_file, logname=__name__):
+        try:
+            with open(config_file, 'r') as stream:
+                conf = yaml.load(stream)
+        except yaml.YAMLError as ex:
+            mark = ex.problem_mark
+            logger.error("Error in file: {0} at ({1}, {2})".format(
+                config_file,
+                mark.line + 1,
+                mark.column + 1))
+            return None
+
 def dp_parser(config_file, logname):
+    logger = logging.getLogger(logname)
     conf = read_config(config_file, logname)
     if conf is None:
         return None
 
+    version = conf.pop('version', 1)
+
+    if version == 1:
+        return _dp_parser_v1(conf, config_file, logname)
+    elif version == 2:
+        return _dp_parser_v2(conf, config_file, logname)
+    else:
+        logger.error("unsupported config version number: {0}".format(version))
+        return None
+
+def _dp_parser_v1(conf, config_file, logname):
+    logger = logging.getLogger(logname)
+
     # TODO: warn when the configuration contains meaningless elements
     # they are probably typos
+
     dp_id = conf['dp_id']
 
     interfaces = conf.pop('interfaces', {})
@@ -68,6 +129,38 @@ def dp_parser(config_file, logname):
 
     return dp
 
+def _dp_parser_v2(cls, conf, config_file, logname):
+    logger = logging.getLogger(logname)
+
+    if 'dps' not in conf:
+        logger.error("dps not configured in file: {0}".format(config_file))
+        return None
+
+    vlans = conf.pop('vlans', {})
+    acls = conf.pop('acls', {})
+
+    dps = {}
+    for dp_id, dp_conf in conf['dps'].iteritems():
+        dp = DP(dp_id, logname)
+        interfaces = dp_conf.pop('interfaces', {})
+        dp.update(dp_conf)
+        dp.set_defaults()
+
+        for vid, vlan_conf in vlans.iteritems():
+            dp.add_vlan(vid, vlan_conf)
+        for port_num, port_conf in interfaces.iteritems():
+            dp.add_port(port_num, port_conf)
+        for acl_num, acl_conf in acls.iteritems():
+            dp.add_acl(acl_num, acl_conf)
+
+        dps[dp_id] = dp
+
+    if dps:
+        return dps.itervalues()[0]
+    else:
+        logger.error("dps configured with no elements in file: {0}".format(config_file))
+        return None
+
 def valve_parser(config_file, logname):
     dp = dp_parser(config_file, logname)
     return valve_factory(dp.hardware)(dp, logname)
@@ -76,6 +169,7 @@ def gauge_conf_parser(config_file, logname):
     logger = get_logger(logname)
 
 def gauge_parser(config_file, logname):
+    #TODO: make this backwards compatible
     logger = get_logger(logname)
 
     conf = read_config(config_file, logname)
