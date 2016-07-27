@@ -21,7 +21,7 @@ srcdir = '../src/ryu_faucet/org/onfsdn/faucet'
 sys.path.insert(0, os.path.abspath(os.path.join(testdir, srcdir)))
 
 import unittest
-from config import dp_parser
+from faucet_parser import dp_parser
 
 class DistConfigTestCase(unittest.TestCase):
     def setUp(self):

@@ -20,7 +20,7 @@ import ipaddr
 
 from logging.handlers import TimedRotatingFileHandler
 
-from config import valve_parser
+from faucet_parser import valve_parser
 from util import kill_on_exception
 
 from ryu.base import app_manager

@@ -52,7 +52,7 @@ class HostCacheEntry(object):
         self.cache_time = now
 
 
-def valve_factory(hardware):
+def valve_factory(dp):
     """Return a Valve object based dp's hardware configuration field.
 
     Arguments:
@@ -66,8 +66,8 @@ def valve_factory(hardware):
         'ZodiacFX': Valve,
     }
 
-    if hardware in SUPPORTED_HARDWARE:
-        return SUPPORTED_HARDWARE[hardware]
+    if dp.hardware in SUPPORTED_HARDWARE:
+        return SUPPORTED_HARDWARE[dp.hardware]
     else:
         return None
 

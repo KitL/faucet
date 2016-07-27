@@ -7,29 +7,40 @@ from ryu.lib import hub
 from influxdb import InfluxDBClient
 
 
-def gauge_factory(gauge_type):
+def watcher_factory(conf):
     """Return a Gauge object based on type.
 
     Arguments:
     gauge_conf -- a GaugeConf object with the configuration for this valve.
     """
-    GAUGE_TYPES = {
-        'port_state': GaugePortStateLogger,
-        'port_state_influx': GaugePortStateInfluxDBLogger,
-        'port_stats': GaugePortStatsPoller,
-        'port_stats_influx': GaugePortStatsInfluxDBPoller,
-        'flow_table': GaugeFlowTablePoller,
+
+    WATCHER_TYPES = {
+        'port_state': {
+            'text': GaugePortStateLogger,
+            'influx': GaugePortStateInfluxDBLogger,
+            },
+        'port_stats': {
+            'text': GaugePortStatsPoller,
+            'influx': GaugePortStatsInfluxDBPoller,
+            },
+        'flow_table': {
+            'text': GaugeFlowTablePoller,
+            }
     }
 
-    if gauge_type in GAUGE_TYPES:
-        return GAUGE_TYPES[gauge_type]
+    w_type = conf.type
+    print w_type
+    db_type = conf.db_type
+    print db_type
+    if w_type in WATCHER_TYPES and db_type in WATCHER_TYPES[w_type]:
+        return WATCHER_TYPES[w_type][db_type]
     else:
         return None
 
 class InfluxShipper(object):
     """Convenience class for shipping values to influx db.
 
-    Inheritors must have a GaugeConfig object as conf.
+    Inheritors must have a WatcherConf object as conf.
     """
     def ship_points(self, points):
         print "shipping points to influxdb"
@@ -48,7 +59,7 @@ class GaugePortStateLogger(object):
         self.dp = dp
         self.conf = conf
         self.logger = logging.getLogger(
-            logname + '.{0}'.format(self.conf.gauge_type)
+            logname + '.{0}'.format(self.conf.type)
             )
 
     def update(self, rcv_time, msg):
@@ -111,7 +122,7 @@ class GaugePoller(object):
         self.reply_pending = False
         self.interval = self.conf.interval
         self.logger = logging.getLogger(
-            logname + '.{0}'.format(self.conf.gauge_type)
+            logname + '.{0}'.format(self.conf.type)
             )
 
     def start(self, ryudp):
@@ -194,7 +205,7 @@ class GaugePortStatsPoller(GaugePoller):
             else:
                 ref = self.dp.name + "-" + self.dp.ports[stat.port_no].name
 
-            with open(self.conf.output_file, 'a') as logfile:
+            with open(self.conf.file, 'a') as logfile:
                 logfile.write('{0}\t{1}\t{2}\n'.format(rcv_time_str,
                                                        ref + "-packets-out",
                                                        stat.tx_packets))
@@ -298,7 +309,7 @@ class GaugeFlowTablePoller(GaugePoller):
         jsondict = msg.to_jsondict()
         rcv_time_str = time.strftime('%b %d %H:%M:%S')
 
-        with open(self.conf.output_file, 'a') as logfile:
+        with open(self.conf.file, 'a') as logfile:
             ref = self.dp.name + "-flowtables"
             logfile.write("---\n")
             logfile.write("time: {0}\nref: {1}\nmsg: {2}\n".format(

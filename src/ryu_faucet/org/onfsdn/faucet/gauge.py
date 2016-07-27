@@ -30,7 +30,7 @@ from ryu.controller.handler import MAIN_DISPATCHER
 from ryu.controller.handler import set_ev_cls
 from ryu.ofproto import ofproto_v1_3
 
-from config import gauge_parser
+from faucet_parser import watcher_parser
 
 class EventGaugeReconfigure(event.EventBase):
     pass
@@ -53,10 +53,13 @@ class Gauge(app_manager.RyuApp):
     def __init__(self, *args, **kwargs):
         super(Gauge, self).__init__(*args, **kwargs)
         self.config_file = os.getenv(
-            'GAUGE_CONFIG', '/etc/ryu/faucet/gauge.yaml')
+            'GAUGE_CONFIG', '/etc/ryu/faucet/gauge.conf')
         self.exc_logfile = os.getenv(
             'GAUGE_EXCEPTION_LOG', '/var/log/ryu/faucet/gauge_exception.log')
         self.logfile = os.getenv('GAUGE_LOG', '/var/log/ryu/faucet/gauge.log')
+        print self.logfile
+        print self.exc_logfile
+        print self.config_file
 
         # Setup logging
         self.logger = logging.getLogger(self.logname)
@@ -82,9 +85,9 @@ class Gauge(app_manager.RyuApp):
         # Set the signal handler for reloading config file
         signal.signal(signal.SIGHUP, self.signal_handler)
 
-        # dict of pollers/handlers:
+        # dict of watchers/handlers:
         # indexed by dp_id and then by name
-        self.pollers = gauge_parser(self.config_file, self.logname)
+        self.watchers = watcher_parser(self.config_file, self.logname)
 
         # Create dpset object for querying Ryu's DPSet application
         self.dpset = kwargs['dpset']
@@ -93,19 +96,19 @@ class Gauge(app_manager.RyuApp):
     @kill_on_exception(exc_logname)
     def handler_connect_or_disconnect(self, ev):
         ryudp = ev.dp
-        if ryudp.id not in self.pollers:
-            self.logger.info("no poller configured for {0}".format(ryudp.id))
+        if ryudp.id not in self.watchers:
+            self.logger.info("no watcher configured for {0}".format(ryudp.id))
             return
 
         if ev.enter: # DP is connecting
             self.logger.info("datapath up %x", ryudp.id)
-            for poller in self.pollers[ryudp.id].values():
-                poller.start(ryudp)
+            for watcher in self.watchers[ryudp.id].values():
+                watcher.start(ryudp)
         else: # DP is disconnecting
-            if ryudp.id in self.pollers:
-                for poller in self.pollers[ryudp.id].values():
-                    poller.stop()
-                del self.pollers[ryudp.id]
+            if ryudp.id in self.watchers:
+                for watcher in self.watchers[ryudp.id].values():
+                    watcher.stop()
+                del self.watchers[ryudp.id]
             self.logger.info("datapath down %x", ryudp.id)
 
     def signal_handler(self, sigid, frame):
@@ -115,41 +118,41 @@ class Gauge(app_manager.RyuApp):
     @set_ev_cls(EventGaugeReconfigure, MAIN_DISPATCHER)
     def reload_config(self, ev):
         self.config_file = os.getenv('GAUGE_CONFIG', self.config_file)
-        new_pollers = gauge_parser(self.config_file)
-        for dp_id, pollers in self.pollers:
-            for poller_type, poller in pollers:
+        new_watchers = gauge_parser(self.config_file)
+        for dp_id, watchers in self.watchers:
+            for watcher_type, watcher in watchers:
                 try:
-                    new_poller = new_pollers[dp_id][poller_type]
-                    self.pollers[dp_id][poller_type] = new_poller
+                    new_watcher = new_watchers[dp_id][watcher_type]
+                    self.watchers[dp_id][watcher_type] = new_watcher
                 except KeyError:
-                    del self.pollers[dp_id][poller_type]
-                if poller.running():
-                    poller.stop()
-                    new_poller.start(sef.dpset.get(dp_id))
+                    del self.watchers[dp_id][watcher_type]
+                if watcher.running():
+                    watcher.stop()
+                    new_watcher.start(sef.dpset.get(dp_id))
 
     @set_ev_cls(dpset.EventDPReconnected, dpset.DPSET_EV_DISPATCHER)
     @kill_on_exception(exc_logname)
     def handler_reconnect(self, ev):
         self.logger.info("datapath reconnected %x", ev.dp.id)
-        for poller in self.pollers[ryudp.id].values():
-            poller.start(ryudp)
+        for watcher in self.watchers[ryudp.id].values():
+            watcher.start(ryudp)
 
-    def update_poller(self, dp_id, name, msg):
+    def update_watcher(self, dp_id, name, msg):
         rcv_time = time.time()
-        if dp_id in self.pollers and name in self.pollers[dp_id]:
-            self.pollers[dp_id][name].update(rcv_time, msg)
+        if dp_id in self.watchers and name in self.watchers[dp_id]:
+            self.watchers[dp_id][name].update(rcv_time, msg)
 
     @set_ev_cls(ofp_event.EventOFPPortStatus, MAIN_DISPATCHER)
     @kill_on_exception(exc_logname)
     def port_status_handler(self, ev):
-        self.update_poller(ev.msg.datapath.id, 'port_state', ev.msg)
+        self.update_watcher(ev.msg.datapath.id, 'port_state', ev.msg)
 
     @set_ev_cls(ofp_event.EventOFPPortStatsReply, MAIN_DISPATCHER)
     @kill_on_exception(exc_logname)
     def port_stats_reply_handler(self, ev):
-        self.update_poller(ev.msg.datapath.id, 'port_stats', ev.msg)
+        self.update_watcher(ev.msg.datapath.id, 'port_stats', ev.msg)
 
     @set_ev_cls(ofp_event.EventOFPFlowStatsReply, MAIN_DISPATCHER)
     @kill_on_exception(exc_logname)
     def flow_stats_reply_handler(self, ev):
-        self.update_poller(ev.msg.datapath.id, 'flow_table', ev.msg)
+        self.update_watcher(ev.msg.datapath.id, 'flow_table', ev.msg)

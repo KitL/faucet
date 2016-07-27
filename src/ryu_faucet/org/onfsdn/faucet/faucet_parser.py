@@ -16,10 +16,11 @@
 import copy
 import logging
 import yaml
+
 from valve import valve_factory
-from poller import gauge_factory
+from watcher import watcher_factory
 from dp import DP
-from gauge_config import GaugeConfig
+from watcher_conf import WatcherConf
 
 def get_logger(logname):
     return logging.getLogger(logname + '.config')
@@ -38,52 +39,6 @@ def read_config(config_file, logname):
         logger.error(errormsg)
         return None
     return conf
-
-    @classmethod
-    def _parser_v2(cls, conf, config_file, logname):
-        logger = logging.getLogger(logname)
-
-        if 'dps' not in conf:
-            logger.error("dps not configured in file: {0}".format(config_file))
-            return None
-
-        vlans = conf.pop('vlans', {})
-        acls = conf.pop('acls', {})
-
-        dps = []
-        for dp_id, cf in conf['dps'].iteritems():
-            dp = DP(dp_id, logname)
-            interfaces = cf.pop('interfaces', {})
-            dp.__dict__.update(cf)
-            dp.set_defaults()
-
-            for vid, vlan_conf in vlans.iteritems():
-                dp.add_vlan(vid, vlan_conf)
-            for port_num, port_conf in interfaces.iteritems():
-                dp.add_port(port_num, port_conf)
-            for acl_num, acl_conf in acls.iteritems():
-                dp.add_acl(acl_num, acl_conf)
-
-            dps.append(dp)
-
-        if dps:
-            return dps[0]
-        else:
-            logger.error("dps configured with no elements in file: {0}".format(config_file))
-            return None
-
-    @classmethod
-    def parser(cls, config_file, logname=__name__):
-        try:
-            with open(config_file, 'r') as stream:
-                conf = yaml.load(stream)
-        except yaml.YAMLError as ex:
-            mark = ex.problem_mark
-            logger.error("Error in file: {0} at ({1}, {2})".format(
-                config_file,
-                mark.line + 1,
-                mark.column + 1))
-            return None
 
 def dp_parser(config_file, logname):
     logger = logging.getLogger(logname)
@@ -140,18 +95,22 @@ def _dp_parser_v2(cls, conf, config_file, logname):
     acls = conf.pop('acls', {})
 
     dps = {}
-    for dp_id, dp_conf in conf['dps'].iteritems():
-        dp = DP(dp_id, logname)
-        interfaces = dp_conf.pop('interfaces', {})
-        dp.update(dp_conf)
-        dp.set_defaults()
+    try:
+        dp.sanity_check()
+    except AssertionError as err:
+        self.logger.exception("Error in config file: {0}".format(err))
+        return None
 
-        for vid, vlan_conf in vlans.iteritems():
-            dp.add_vlan(vid, vlan_conf)
-        for port_num, port_conf in interfaces.iteritems():
-            dp.add_port(port_num, port_conf)
-        for acl_num, acl_conf in acls.iteritems():
-            dp.add_acl(acl_num, acl_conf)
+    for identifier, dp_conf in conf['dps'].iteritems():
+        interfaces = dp_conf.pop('interfaces', {})
+
+        dp = DP(identifier, dp_conf)
+        for v_identifier, vlan_conf in vlans.iteritems():
+            dp.add_vlan(v_identifier, vlan_conf)
+        for p_identifier, port_conf in interfaces.iteritems():
+            dp.add_port(p_identifier, port_conf)
+        for a_identifier, acl_conf in acls.iteritems():
+            dp.add_acl(a_identifier, acl_conf)
 
         dps[dp_id] = dp
 
@@ -165,12 +124,10 @@ def valve_parser(config_file, logname):
     dp = dp_parser(config_file, logname)
     return valve_factory(dp.hardware)(dp, logname)
 
-def gauge_conf_parser(config_file, logname):
-    logger = get_logger(logname)
-
-def gauge_parser(config_file, logname):
+def watcher_parser(config_file, logname):
     #TODO: make this backwards compatible
     logger = get_logger(logname)
+    logging.info("here I am")
 
     conf = read_config(config_file, logname)
     if conf is None:
@@ -178,38 +135,35 @@ def gauge_parser(config_file, logname):
 
     result = {}
 
-    valves = {}
-    for valve_file in conf['valve_configs']:
-        dp = dp_parser(valve_file, logname)
-        valves[dp.dp_id] = dp
+    dps = {}
+    for faucet_file in conf['faucet_configs']:
+        dp = dp_parser(faucet_file, logname)
+        dps[dp.name] = dp
 
-    for dictionary in conf['gauges']:
-        for dp_id in dictionary['dps']:
-            if dp_id not in valves:
-                errormsg = "dp_id: {0} metered but not configured".format(
-                    dp_id
+    dbs = conf.pop('dbs')
+
+    for name, dictionary in conf['watchers'].iteritems():
+        for dp_name in dictionary['dps']:
+            if dp_name not in dps:
+                errormsg = "dp: {0} metered but not configured".format(
+                    dp_name
                     )
                 logger.error(errormsg)
                 continue
 
-            dp = valves[dp_id]
-
-            gauge_conf = GaugeConfig(dictionary)
-
+            dp = dps[dp_name]
+            dp_id = dp.dp_id
             result.setdefault(dp_id, {})
 
-            gauge_type = gauge_conf.gauge_type
-            if gauge_conf.influx_stats:
-                gauge_type += '_influx'
+            watcher_conf = WatcherConf(name, dictionary)
+            print dbs[watcher_conf.db]
+            watcher_conf.add_db(dbs[watcher_conf.db])
 
-            # Note the use of gauge_conf.gauge_type for the key and gauge_type
-            # for the factory. This is so gauge can find the appropriate gauge
-            # more simply.
-            gauge = gauge_factory(gauge_type)(dp, gauge_conf, logname)
-            if gauge is None:
-                logging.error('invalid gauge config {0} {1}'.format(
-                    dp_id, gauge_conf.gauge_type))
+            watcher = watcher_factory(watcher_conf)(dp, watcher_conf, logname)
+            if watcher is None:
+                logging.error('invalid watcher configuration {0} {1}'.format(
+                    dp_name, watcher_conf.name))
                 continue
-            result[dp_id][gauge_conf.gauge_type] = gauge
+            result[dp_id][watcher_conf.type] = watcher
 
     return result

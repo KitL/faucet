@@ -15,14 +15,14 @@
 
 import copy
 
+from conf import Conf
 from vlan import VLAN
 from port import Port
 
 
-class DP(object):
+class DP(Conf):
     """Object to hold the configuration for a faucet controlled datapath."""
 
-    dp_id = None
     acls = None
     vlans = None
     ports = None
@@ -30,13 +30,18 @@ class DP(object):
     influxdb_stats = False
 
     # Values that are set to None will be set using set_defaults
-    # they are included here for config checking
+    # they are included here for testing and informational purposes
     defaults = {
+        'dp_id': None,
+        # Name for this dp, used for stats reporting and configuration
+        'name': None,
         'table_offset': 0,
         # The table for internally associating vlans
         'vlan_table': None,
         'acl_table': None,
         'eth_src_table': None,
+        'ipv4_fib_Table': None,
+        'ipv6_fib_table': None,
         'eth_dst_table': None,
         'flood_table': None,
         # How much to offset default priority by
@@ -51,8 +56,6 @@ class DP(object):
         'cookie': 1524372928,
         # inactive MAC timeout
         'timeout': 300,
-        # Name for this dp, used for stats reporting
-        'name': None,
         # description, strictly informational
         'description': None,
         # The hardware maker (for chosing an openflow driver)
@@ -63,20 +66,15 @@ class DP(object):
         'ofchannel_log': None,
         }
 
-    def __init__(self, dp_id, conf):
-        self.dp_id = dp_id
+    def __init__(self, _id, conf):
+        self._id = _id
+        self.update(conf)
+        self.set_defaults()
         self.acls = {}
         self.vlans = {}
         self.ports = {}
         self.mirror_from_port = {}
         self.acl_in = {}
-        self.update(conf)
-        self.set_defaults()
-
-    def update(self, dictionary):
-        # TODO: it would be good to warn on keys that are set but arent in
-        # defaults
-        self.__dict__.update(dictionary)
 
     def sanity_check(self):
         # TODO: this shouldnt use asserts
@@ -90,24 +88,23 @@ class DP(object):
             assert isinstance(portnum, int)
             assert isinstance(port, Port)
 
-    def _set_default(self, key, value):
-        if key not in self.__dict__ or self.__dict__[key] is None:
-            self.__dict__[key] = value
-
     def set_defaults(self):
         for key, value in self.defaults.iteritems():
             self._set_default(key, value)
         # fix special cases
+        self._set_default('dp_id', self._id)
+        self._set_default('name', str(self._id))
         self._set_default('vlan_table', self.table_offset)
         self._set_default('acl_table', self.table_offset + 1)
         self._set_default('eth_src_table', self.acl_table + 1)
+        self._set_default('ipv4_fib_table', self.eth_src_table + 1)
+        self._set_default('ipv6_fib_table', self.ipv4_fib_table + 1)
         self._set_default('eth_dst_table', self.eth_src_table + 1)
         self._set_default('flood_table', self.eth_dst_table + 1)
         self._set_default('lowest_priority', self.priority_offset)
         self._set_default('low_priority', self.priority_offset + 9000)
         self._set_default('high_priority', self.low_priority + 1)
         self._set_default('highest_priority', self.high_priority + 98)
-        self._set_default('name', str(self.dp_id))
         self._set_default('description', self.name)
 
     def add_acl(self, acl_num, acl_conf=None):
