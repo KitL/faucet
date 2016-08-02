@@ -20,6 +20,8 @@ import yaml
 from valve import valve_factory
 from watcher import watcher_factory
 from dp import DP
+from port import Port
+from vlan import VLAN
 from watcher_conf import WatcherConf
 
 def get_logger(logname):
@@ -29,7 +31,7 @@ def read_config(config_file, logname):
     logger = get_logger(logname)
     try:
         with open(config_file, 'r') as stream:
-            conf = yaml.load(stream)
+            conf = yaml.safe_load(stream)
     except yaml.YAMLError as ex:
         mark = ex.problem_mark
         errormsg = "Error in file: {0} at ({1}, {2})".format(
@@ -40,8 +42,9 @@ def read_config(config_file, logname):
         return None
     return conf
 
+
 def dp_parser(config_file, logname):
-    logger = logging.getLogger(logname)
+    logger = get_logger(logname)
     conf = read_config(config_file, logname)
     if conf is None:
         return None
@@ -56,43 +59,66 @@ def dp_parser(config_file, logname):
         logger.error("unsupported config version number: {0}".format(version))
         return None
 
+def _port_parser(p_identifier, port_conf, vlans):
+    port = Port(p_identifier, port_conf)
+
+    if port.mirror is not None:
+        # ignore other config
+        return port
+    if port.native_vlan is not None:
+        v_identifier = port.native_vlan
+        vlan = vlans.setdefault(v_identifier,  VLAN(v_identifier))
+        vlan.untagged.append(port)
+    for v_identifier in port.tagged_vlans:
+        vlan = vlans.setdefault(v_identifier,  VLAN(v_identifier))
+        vlan.tagged.append(port)
+
+    return port
+
+
 def _dp_parser_v1(conf, config_file, logname):
-    logger = logging.getLogger(logname)
+    logger = get_logger(logname)
 
     # TODO: warn when the configuration contains meaningless elements
     # they are probably typos
+    if 'dp_id' not in conf:
+        logger.error('dp_id not configured in file {0}'.format(config_file))
 
     dp_id = conf['dp_id']
-
-    interfaces = conf.pop('interfaces', {})
-    vlans = conf.pop('vlans', {})
-    acls = conf.pop('acls', {})
-
     dp = DP(dp_id, conf)
+
+    interfaces_conf = conf.pop('interfaces', {})
+    vlans_conf = conf.pop('vlans', {})
+    acls_conf = conf.pop('acls', {})
+
+    logger.info(str(dp))
+    vlans = {}
+    port = {}
+    for vid, vlan_conf in vlans_conf.iteritems():
+        vlans[vid] = VLAN(vid, vlan_conf)
+    for port_num, port_conf in interfaces_conf.iteritems():
+        dp.add_port(_port_parser(port_num, port_conf, vlans))
+    for acl_num, acl_conf in acls_conf.iteritems():
+        dp.add_acl(acl_num, acl_conf)
+    for vlan in vlans.itervalues():
+        dp.add_vlan(vlan)
     try:
         dp.sanity_check()
     except AssertionError as err:
         self.logger.exception("Error in config file: {0}".format(err))
         return None
 
-    for vid, vlan_conf in vlans.iteritems():
-        dp.add_vlan(vid, vlan_conf)
-    for port_num, port_conf in interfaces.iteritems():
-        dp.add_port(port_num, port_conf)
-    for acl_num, acl_conf in acls.iteritems():
-        dp.add_acl(acl_num, acl_conf)
-
     return dp
 
-def _dp_parser_v2(cls, conf, config_file, logname):
-    logger = logging.getLogger(logname)
+def _dp_parser_v2(conf, config_file, logname):
+    logger = get_logger(logname)
 
     if 'dps' not in conf:
         logger.error("dps not configured in file: {0}".format(config_file))
         return None
 
-    vlans = conf.pop('vlans', {})
-    acls = conf.pop('acls', {})
+    vlans_conf = conf.pop('vlans', {})
+    acls_conf = conf.pop('acls', {})
 
     dps = {}
     try:
@@ -102,14 +128,26 @@ def _dp_parser_v2(cls, conf, config_file, logname):
         return None
 
     for identifier, dp_conf in conf['dps'].iteritems():
-        interfaces = dp_conf.pop('interfaces', {})
+        ports_conf = dp_conf.pop('interfaces', {})
 
         dp = DP(identifier, dp_conf)
-        for v_identifier, vlan_conf in vlans.iteritems():
-            dp.add_vlan(v_identifier, vlan_conf)
-        for p_identifier, port_conf in interfaces.iteritems():
-            dp.add_port(p_identifier, port_conf)
-        for a_identifier, acl_conf in acls.iteritems():
+        vlans = {}
+        ports = {}
+
+        for vid, vlan_conf in vlans_conf.iteritems():
+            vlans[vid] = _vlan_parser(vid, vlan_conf)
+        for port_num, port_conf in ports_conf.iteritems():
+            ports[port_num] = _port_parser(port_num, port_conf, vlans)
+        for vlan in vlans.itervalues():
+            # add now for vlans configured on ports but not elsewhere
+            dp.add_vlan(vlan)
+        for port in ports.itervalues():
+            # now that all ports are created, handle mirroring rewriting
+            if port.mirror is not None:
+                port.mirror = ports[port.mirror].number
+            dp.add_port(port)
+        for a_identifier, acl_conf in acls_conf.iteritems():
+            # TODO: turn this into an object
             dp.add_acl(a_identifier, acl_conf)
 
         dps[dp_id] = dp
@@ -122,17 +160,82 @@ def _dp_parser_v2(cls, conf, config_file, logname):
 
 def valve_parser(config_file, logname):
     dp = dp_parser(config_file, logname)
-    return valve_factory(dp.hardware)(dp, logname)
+    return valve_factory(dp)(dp, logname)
 
 def watcher_parser(config_file, logname):
-    #TODO: make this backwards compatible
     logger = get_logger(logname)
-    logging.info("here I am")
+    #TODO: make this backwards compatible
 
     conf = read_config(config_file, logname)
     if conf is None:
-        return None
+        # in this case it may be an old style config
+        return _watcher_parser_v1(config_file, logname)
+    else:
+        return _new_watcher_parser_v2(conf, logname)
 
+def _watcher_parser_v1(config_file, logname):
+    logger = get_logger(logname)
+    result = {}
+
+    INFLUX_KEYS = [
+        'influx_db',
+        'influx_host',
+        'influx_port',
+        'influx_user',
+        'influx_pwd',
+        'influx_timeout',
+        ]
+
+    dps = []
+    with open(config_file, 'r') as conf:
+        for line in conf:
+            dps.append(dp_parser(line.strip(), logname))
+
+    for dp in dps:
+        dp_id = dp.dp_id
+        result.setdefault(dp_id, {})
+
+        if dp.influxdb_stats:
+            w_type = 'port_state'
+            port_state_conf = {
+                'type': w_type,
+                'db_type': = 'influx'
+                }
+            for key in INFLUX_KEYS:
+                port_state_conf[key] = dp.__dict__.get(key, None)
+            name = dp.name + '-' + w_type
+            watcher = watcher_factory(WatcherConf(name, port_state_conf))
+            result[dp_id][w_type] = watcher
+
+        if dp.monitor_ports:
+            w_type = 'port_stats'
+            port_stats_conf = {'type': w_type}
+            port_stats_conf['interval'] = dp.monitor_ports_interval
+            if dp.influxdb_stats:
+                port_stats_conf['db_type'] = 'influx'
+                for key in INFLUX_KEYS:
+                    port_stats_conf[key] = dp.__dict__.get(key, None)
+            else:
+                port_stats_conf['db_type'] = 'text'
+                port_stats_conf['file'] = dp.monitor_ports_file
+            name = dp.name + '-' + w_type
+            watcher = watcher_factory(WatcherConf(name, port_state_conf))
+            result[dp_id][w_type] = watcher
+
+        if dp.monitor_flow_table:
+            w_type = 'flow_table'
+            flow_table_conf = {'type': w_type}
+            flow_table_conf['interval'] = dp.monitor_flow_table_interval
+            flow_table_conf['file'] = dp.monitor_flow_table_file
+            name = dp.name + '-' + w_type
+            watcher = watcher_factory(WatcherConf(name, port_state_conf))
+            result[dp_id][w_type] = watcher
+
+    return result
+
+
+def _watcher_parser_v2(conf, logname):
+    logger = get_logger(logname)
     result = {}
 
     dps = {}
@@ -156,7 +259,6 @@ def watcher_parser(config_file, logname):
             result.setdefault(dp_id, {})
 
             watcher_conf = WatcherConf(name, dictionary)
-            print dbs[watcher_conf.db]
             watcher_conf.add_db(dbs[watcher_conf.db])
 
             watcher = watcher_factory(watcher_conf)(dp, watcher_conf, logname)

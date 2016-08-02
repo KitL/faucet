@@ -25,6 +25,10 @@ class Port(Conf):
         'enabled': True,
         'permanent_learn': False,
         'unicast_flood': True,
+        'mirror': None,
+        'native_vlan': None,
+        'tagged_vlans': None,
+        'acl_in': None,
         }
 
     def __init__(self, _id, conf=None):
@@ -38,10 +42,11 @@ class Port(Conf):
     def set_defaults(self):
         for key, value in self.defaults.iteritems():
             self._set_default(key, value)
-        self._set_default('of_number', self._id)
+        self._set_default('of_number', int(self._id))
         self._set_default('number', self.of_number)
         self._set_default('name', str(self._id))
         self._set_default('description', self.name)
+        self._set_default('tagged_vlans', [])
 
     def running(self):
         return self.enabled and self.phys_up

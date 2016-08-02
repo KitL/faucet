@@ -29,9 +29,7 @@ def watcher_factory(conf):
     }
 
     w_type = conf.type
-    print w_type
     db_type = conf.db_type
-    print db_type
     if w_type in WATCHER_TYPES and db_type in WATCHER_TYPES[w_type]:
         return WATCHER_TYPES[w_type][db_type]
     else:

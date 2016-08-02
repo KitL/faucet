@@ -110,6 +110,7 @@ class FaucetTest(unittest.TestCase):
 
     ONE_GOOD_PING = '1 packets transmitted, 1 received, 0% packet loss'
     CONFIG = ''
+    GAUGE_CONFIG = ''
     CONTROLLER_IPV4 = '10.0.0.254'
     CONTROLLER_IPV6 = 'fc00::1:254'
     OFCTL = 'ovs-ofctl -OOpenFlow13'
@@ -136,12 +137,10 @@ class FaucetTest(unittest.TestCase):
         self.monitor_flow_table_file = os.path.join(self.tmpdir,
              'flow.txt')
         self.CONFIG = '\n'.join((
-            self.get_config_header(
-                DPID, HARDWARE, self.monitor_ports_file, self.monitor_flow_table_file),
+            self.get_config_header(DPID, HARDWARE),
             self.CONFIG % PORT_MAP,
             'ofchannel_log: "%s"' % self.debug_log_path))
         self.GAUGE_CONFIG = self.get_gauge_config(
-            DPID,
             os.environ['FAUCET_CONFIG'],
             self.monitor_ports_file,
             self.monitor_flow_table_file,
@@ -152,37 +151,39 @@ class FaucetTest(unittest.TestCase):
         self.net = None
         self.topo = None
 
-    def get_gauge_config(self, dp_id, faucet_config, monitor_ports_file,
+    def get_gauge_config(self, faucet_config, monitor_ports_file,
                          monitor_flow_table_file):
         return '''
 ---
-valve_configs:
-    - {1}
-gauges:
-    - dps: [{0}]
-      gauge_type: 'port_stats'
-      output_file: '{2}'
-      interval: 2
-    - dps: [{0}]
-      gauge_type: 'flow_table'
-      output_file: '{3}'
-      interval: 2
-'''.format(dp_id, faucet_config, monitor_ports_file, monitor_flow_table_file)
+faucet_configs:
+    - {0}
+watchers:
+    port_stats:
+        dps: ['faucet-1']
+        type: 'port_stats'
+        db: 'ps_file'
+        interval: 2
+    flow_table:
+        dps: ['faucet-1']
+        type: 'flow_table'
+        db: 'ft_file'
+        interval: 2
+dbs:
+    ps_file:
+        type: 'text'
+        file: '{1}'
+    ft_file:
+        type: 'text'
+        file: '{2}'
+'''.format(faucet_config, monitor_ports_file, monitor_flow_table_file)
 
-    def get_config_header(self, dpid, hardware,
-                          monitor_ports_files, monitor_flow_table_file):
+    def get_config_header(self, dpid, hardware):
         return '''
 ---
 dp_id: 0x%s
 name: "faucet-1"
 hardware: "%s"
-monitor_ports: True
-monitor_ports_interval: 2
-monitor_ports_file: "%s"
-monitor_flow_table: True
-monitor_flow_table_interval: 2
-monitor_flow_table_file: "%s"
-''' % (dpid, hardware, monitor_ports_files, monitor_flow_table_file)
+''' % (dpid, hardware)
 
     def attach_physical_switch(self):
         switch = self.net.switches[0]

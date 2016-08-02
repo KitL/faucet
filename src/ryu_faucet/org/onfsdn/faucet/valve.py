@@ -688,6 +688,7 @@ class Valve(object):
         acl_ofmsgs, forwarding_table = self.port_add_acl(port_num)
         ofmsgs.extend(acl_ofmsgs)
         ofmsgs.extend(self.port_add_vlans(port, forwarding_table, mirror_act))
+
         return ofmsgs
 
     def port_delete(self, dp_id, port_num):

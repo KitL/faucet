@@ -19,7 +19,6 @@ from conf import Conf
 from vlan import VLAN
 from port import Port
 
-
 class DP(Conf):
     """Object to hold the configuration for a faucet controlled datapath."""
 
@@ -92,7 +91,7 @@ class DP(Conf):
         for key, value in self.defaults.iteritems():
             self._set_default(key, value)
         # fix special cases
-        self._set_default('dp_id', self._id)
+        self._set_default('dp_id', int(self._id))
         self._set_default('name', str(self._id))
         self._set_default('vlan_table', self.table_offset)
         self._set_default('acl_table', self.table_offset + 1)
@@ -107,47 +106,22 @@ class DP(Conf):
         self._set_default('highest_priority', self.high_priority + 98)
         self._set_default('description', self.name)
 
-    def add_acl(self, acl_num, acl_conf=None):
+    def add_acl(self, acl_ident, acl_conf=None):
         if acl_conf is not None:
-            self.acls[acl_num] = [x['rule'] for x in acl_conf]
+            self.acls[acl_ident] = [x['rule'] for x in acl_conf]
 
-    def add_port(self, port_num, port_conf=None):
-        # add port specific vlans or fall back to defaults
-        port_conf = copy.copy(port_conf) if port_conf else {}
-
-        port = self.ports.setdefault(port_num, Port(port_num, port_conf))
-
-        port_conf.setdefault('mirror', None)
-        if port_conf['mirror'] is not None:
-            from_port_num = port_conf['mirror']
-            self.mirror_from_port[from_port_num] = port_num
-            # other configuration entries ignored.
+    def add_port(self, port):
+        port_num = port.number
+        self.ports[port_num] = port
+        if port.mirror is not None:
+            self.mirror_from_port[port.mirror] = port.number
+            # other configuration entries ignored
             return
+        if port.acl_in is not None:
+            self.acl_in[port_num] = port.acl_in
 
-        # add native vlan
-        port_conf.setdefault('native_vlan', None)
-        if port_conf['native_vlan'] is not None:
-            vid = port_conf['native_vlan']
-            if vid not in self.vlans:
-                self.vlans[vid] = VLAN(vid)
-            self.vlans[vid].untagged.append(self.ports[port_num])
-
-        # add vlans
-        port_conf.setdefault('tagged_vlans', [])
-        for vid in port_conf['tagged_vlans']:
-            if vid not in self.vlans:
-                self.vlans[vid] = VLAN(vid)
-            self.vlans[vid].tagged.append(port)
-
-        # add ACL
-        port_conf.setdefault('acl_in', None)
-        if port_conf['acl_in'] is not None:
-            self.acl_in[port_num] = port_conf['acl_in']
-
-    def add_vlan(self, vid, vlan_conf=None):
-        vlan_conf = copy.copy(vlan_conf) if vlan_conf else {}
-
-        self.vlans.setdefault(vid, VLAN(vid, vlan_conf))
+    def add_vlan(self, vlan):
+        self.vlans[vlan.vid] = vlan
 
     def get_native_vlan(self, port_num):
         if port_num not in self.ports:

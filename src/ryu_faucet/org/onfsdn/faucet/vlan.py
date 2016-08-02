@@ -81,8 +81,9 @@ class VLAN(Conf):
     def set_defaults(self):
         for key, value in self.defaults.iteritems():
             self._set_default(key, value)
-        self._set_default('vid', self._id)
+        self._set_default('vid', int(self._id))
         self._set_default('name', str(self._id))
+        self._set_default('controller_ips', [])
 
     def __str__(self):
         port_list = [str(x) for x in self.get_ports()]
