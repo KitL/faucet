@@ -74,7 +74,7 @@ class VLAN(Conf):
             for route in self.routes:
                 ip_gw = ipaddr.IPAddress(route['ip_gw'])
                 ip_dst = ipaddr.IPNetwork(route['ip_dst'])
-                assert(ip_gw.version == ip_dst.version)
+                assert ip_gw.version == ip_dst.version
                 if ip_gw.version == 4:
                     self.ipv4_routes[ip_dst] = ip_gw
                 else:
@@ -95,7 +95,7 @@ class VLAN(Conf):
         return 'vid:%s ports:%s' % (self.vid, ports)
 
     def get_ports(self):
-        return self.tagged+self.untagged
+        return self.tagged + self.untagged
 
     def contains_port(self, port_number):
         for port in self.get_ports():

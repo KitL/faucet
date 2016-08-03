@@ -142,17 +142,17 @@ class Gauge(app_manager.RyuApp):
         if dp_id in self.watchers and name in self.watchers[dp_id]:
             self.watchers[dp_id][name].update(rcv_time, msg)
 
-    @set_ev_cls(ofp_event.EventOFPPortStatus, MAIN_DISPATCHER)
+    @set_ev_cls(ofp_event.EventOFPPortStatus, MAIN_DISPATCHER) # pylint: disable=no-member
     @kill_on_exception(exc_logname)
     def port_status_handler(self, ev):
         self.update_watcher(ev.msg.datapath.id, 'port_state', ev.msg)
 
-    @set_ev_cls(ofp_event.EventOFPPortStatsReply, MAIN_DISPATCHER)
+    @set_ev_cls(ofp_event.EventOFPPortStatsReply, MAIN_DISPATCHER) # pylint: disable=no-member
     @kill_on_exception(exc_logname)
     def port_stats_reply_handler(self, ev):
         self.update_watcher(ev.msg.datapath.id, 'port_stats', ev.msg)
 
-    @set_ev_cls(ofp_event.EventOFPFlowStatsReply, MAIN_DISPATCHER)
+    @set_ev_cls(ofp_event.EventOFPFlowStatsReply, MAIN_DISPATCHER) # pylint: disable=no-member
     @kill_on_exception(exc_logname)
     def flow_stats_reply_handler(self, ev):
         self.update_watcher(ev.msg.datapath.id, 'flow_table', ev.msg)
