@@ -35,8 +35,10 @@ class VLAN(Conf):
         'bgp_as': 0,
         'bgp_port': 9179,
         'bgp_routerid': '',
-        'bgp_neighbor_address': '',
-        'bgp_neighbor_as': 0,
+        'bgp_neighbour_address': '',
+        'bgp_neighbor_address': None,
+        'bgp_neighbour_as': 0,
+        'bgp_neighbor_as': None,
         'routes': None,
         'max_hosts': None,
         }
@@ -81,9 +83,11 @@ class VLAN(Conf):
     def set_defaults(self):
         for key, value in self.defaults.iteritems():
             self._set_default(key, value)
-        self._set_default('vid', int(self._id))
+        self._set_default('vid', self._id)
         self._set_default('name', str(self._id))
         self._set_default('controller_ips', [])
+        self._set_default('bgp_neighbor_as', self.bgp_neighbour_as)
+        self._set_default('bgp_neighbor_address', self.bgp_neighbour_address)
 
     def __str__(self):
         port_list = [str(x) for x in self.get_ports()]

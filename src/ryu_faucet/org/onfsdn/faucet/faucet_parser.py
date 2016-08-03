@@ -121,21 +121,17 @@ def _dp_parser_v2(conf, config_file, logname):
     acls_conf = conf.pop('acls', {})
 
     dps = {}
-    try:
-        dp.sanity_check()
-    except AssertionError as err:
-        self.logger.exception("Error in config file: {0}".format(err))
-        return None
-
     for identifier, dp_conf in conf['dps'].iteritems():
         ports_conf = dp_conf.pop('interfaces', {})
 
         dp = DP(identifier, dp_conf)
+        dp.sanity_check()
+
         vlans = {}
         ports = {}
 
         for vid, vlan_conf in vlans_conf.iteritems():
-            vlans[vid] = _vlan_parser(vid, vlan_conf)
+            vlans[vid] = VLAN(vid, vlan_conf)
         for port_num, port_conf in ports_conf.iteritems():
             ports[port_num] = _port_parser(port_num, port_conf, vlans)
         for vlan in vlans.itervalues():
@@ -150,10 +146,10 @@ def _dp_parser_v2(conf, config_file, logname):
             # TODO: turn this into an object
             dp.add_acl(a_identifier, acl_conf)
 
-        dps[dp_id] = dp
+        dps[dp.dp_id] = dp
 
     if dps:
-        return dps.itervalues()[0]
+        return dp
     else:
         logger.error("dps configured with no elements in file: {0}".format(config_file))
         return None
@@ -167,11 +163,11 @@ def watcher_parser(config_file, logname):
     #TODO: make this backwards compatible
 
     conf = read_config(config_file, logname)
-    if conf is None:
+    if isinstance(conf, dict):
         # in this case it may be an old style config
-        return _watcher_parser_v1(config_file, logname)
+        return _watcher_parser_v2(conf, logname)
     else:
-        return _new_watcher_parser_v2(conf, logname)
+        return _watcher_parser_v1(config_file, logname)
 
 def _watcher_parser_v1(config_file, logname):
     logger = get_logger(logname)
@@ -199,12 +195,13 @@ def _watcher_parser_v1(config_file, logname):
             w_type = 'port_state'
             port_state_conf = {
                 'type': w_type,
-                'db_type': = 'influx'
+                'db_type': 'influx'
                 }
             for key in INFLUX_KEYS:
                 port_state_conf[key] = dp.__dict__.get(key, None)
             name = dp.name + '-' + w_type
-            watcher = watcher_factory(WatcherConf(name, port_state_conf))
+            watcher_conf = WatcherConf(name, port_state_conf)
+            watcher = watcher_factory(watcher_conf)(dp, watcher_conf, logname)
             result[dp_id][w_type] = watcher
 
         if dp.monitor_ports:
@@ -219,7 +216,8 @@ def _watcher_parser_v1(config_file, logname):
                 port_stats_conf['db_type'] = 'text'
                 port_stats_conf['file'] = dp.monitor_ports_file
             name = dp.name + '-' + w_type
-            watcher = watcher_factory(WatcherConf(name, port_state_conf))
+            watcher_conf = WatcherConf(name, port_stats_conf)
+            watcher = watcher_factory(watcher_conf)(dp, watcher_conf, logname)
             result[dp_id][w_type] = watcher
 
         if dp.monitor_flow_table:
@@ -228,7 +226,8 @@ def _watcher_parser_v1(config_file, logname):
             flow_table_conf['interval'] = dp.monitor_flow_table_interval
             flow_table_conf['file'] = dp.monitor_flow_table_file
             name = dp.name + '-' + w_type
-            watcher = watcher_factory(WatcherConf(name, port_state_conf))
+            watcher_conf = WatcherConf(name, flow_table_conf)
+            watcher = watcher_factory(watcher_conf)(dp, watcher_conf, logname)
             result[dp_id][w_type] = watcher
 
     return result

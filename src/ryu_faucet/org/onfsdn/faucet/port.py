@@ -19,7 +19,6 @@ class Port(Conf):
 
     defaults = {
         'number': None,
-        'of_number': None,
         'name': None,
         'description': None,
         'enabled': True,
@@ -42,8 +41,7 @@ class Port(Conf):
     def set_defaults(self):
         for key, value in self.defaults.iteritems():
             self._set_default(key, value)
-        self._set_default('of_number', int(self._id))
-        self._set_default('number', self.of_number)
+        self._set_default('number', self._id)
         self._set_default('name', str(self._id))
         self._set_default('description', self.name)
         self._set_default('tagged_vlans', [])

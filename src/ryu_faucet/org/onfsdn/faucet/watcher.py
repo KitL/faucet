@@ -41,7 +41,6 @@ class InfluxShipper(object):
     Inheritors must have a WatcherConf object as conf.
     """
     def ship_points(self, points):
-        print "shipping points to influxdb"
         client = InfluxDBClient(
             host=self.conf.influx_host,
             port=self.conf.influx_port,
@@ -84,6 +83,9 @@ class GaugePortStateLogger(object):
         pass
 
 class GaugePortStateInfluxDBLogger(GaugePortStateLogger, InfluxShipper):
+
+    def __init__(self, dp, conf, logname):
+        super(GaugePortStateInfluxDBLogger, self).__init__(dp, conf, logname)
 
     def update(self, rcv_time, msg):
         super(GaugePortStateInfluxDBLogger, self).update(rcv_time, msg)
@@ -180,6 +182,9 @@ class GaugePortStatsPoller(GaugePoller):
     """Periodically sends a port stats request to the datapath and parses and
     outputs the response."""
 
+    def __init__(self, dp, conf, logname):
+        super(GaugePortStatsPoller, self).__init__(dp, conf, logname)
+
     def send_req(self):
         ofp = self.ryudp.ofproto
         ofp_parser = self.ryudp.ofproto_parser
@@ -234,6 +239,9 @@ class GaugePortStatsPoller(GaugePoller):
 class GaugePortStatsInfluxDBPoller(GaugePoller, InfluxShipper):
     """Periodically sends a port stats request to the datapath and parses and
     outputs the response."""
+
+    def __init__(self, dp, conf, logname):
+        super(GaugePortStatsInfluxDBPoller, self).__init__(dp, conf, logname)
 
     def send_req(self):
         ofp = self.ryudp.ofproto
@@ -290,6 +298,9 @@ class GaugeFlowTablePoller(GaugePoller):
     Includes a timestamp and a reference ($DATAPATHNAME-flowtables). The
     flow table is dumped as an OFFlowStatsReply message (in yaml format) that
     matches all flows."""
+
+    def __init__(self, dp, conf, logname):
+        super(GaugeFlowTablePoller, self).__init__(dp, conf, logname)
 
     def send_req(self):
         ofp = self.ryudp.ofproto

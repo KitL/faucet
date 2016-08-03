@@ -91,7 +91,7 @@ class DP(Conf):
         for key, value in self.defaults.iteritems():
             self._set_default(key, value)
         # fix special cases
-        self._set_default('dp_id', int(self._id))
+        self._set_default('dp_id', self._id)
         self._set_default('name', str(self._id))
         self._set_default('vlan_table', self.table_offset)
         self._set_default('acl_table', self.table_offset + 1)
