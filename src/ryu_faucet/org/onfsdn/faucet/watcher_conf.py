@@ -6,6 +6,7 @@ class WatcherConf(Conf):
     defaults = {
         'name': None,
         'type': None,
+        'dp': None
         'interval': 30,
         'db': None,
         'db_type': 'text',
@@ -33,3 +34,6 @@ class WatcherConf(Conf):
         db_type = db_conf.pop('type')
         db_conf['db_type'] = db_type
         self.update(db_conf)
+
+    def add_dp(self, dp):
+        self.dp = dp

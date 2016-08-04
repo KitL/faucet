@@ -17,8 +17,6 @@ import copy
 import logging
 import yaml
 
-from valve import valve_factory
-from watcher import watcher_factory
 from dp import DP
 from port import Port
 from vlan import VLAN
@@ -59,7 +57,7 @@ def dp_parser(config_file, logname):
         logger.error("unsupported config version number: {0}".format(version))
         return None
 
-def _port_parser(p_identifier, port_conf, vlans):
+def port_parser(p_identifier, port_conf, vlans):
     port = Port(p_identifier, port_conf)
 
     if port.mirror is not None:
@@ -97,7 +95,7 @@ def _dp_parser_v1(conf, config_file, logname):
     for vid, vlan_conf in vlans_conf.iteritems():
         vlans[vid] = VLAN(vid, vlan_conf)
     for port_num, port_conf in interfaces_conf.iteritems():
-        dp.add_port(_port_parser(port_num, port_conf, vlans))
+        dp.add_port(port_parser(port_num, port_conf, vlans))
     for acl_num, acl_conf in acls_conf.iteritems():
         dp.add_acl(acl_num, acl_conf)
     for vlan in vlans.itervalues():
@@ -108,7 +106,7 @@ def _dp_parser_v1(conf, config_file, logname):
         self.logger.exception("Error in config file: {0}".format(err))
         return None
 
-    return dp
+    return [dp]
 
 def _dp_parser_v2(conf, config_file, logname):
     logger = get_logger(logname)
@@ -120,7 +118,7 @@ def _dp_parser_v2(conf, config_file, logname):
     vlans_conf = conf.pop('vlans', {})
     acls_conf = conf.pop('acls', {})
 
-    dps = {}
+    dps = []
     for identifier, dp_conf in conf['dps'].iteritems():
         ports_conf = dp_conf.pop('interfaces', {})
 
@@ -133,7 +131,7 @@ def _dp_parser_v2(conf, config_file, logname):
         for vid, vlan_conf in vlans_conf.iteritems():
             vlans[vid] = VLAN(vid, vlan_conf)
         for port_num, port_conf in ports_conf.iteritems():
-            ports[port_num] = _port_parser(port_num, port_conf, vlans)
+            ports[port_num] = port_parser(port_num, port_conf, vlans)
         for vlan in vlans.itervalues():
             # add now for vlans configured on ports but not elsewhere
             dp.add_vlan(vlan)
@@ -146,17 +144,9 @@ def _dp_parser_v2(conf, config_file, logname):
             # TODO: turn this into an object
             dp.add_acl(a_identifier, acl_conf)
 
-        dps[dp.dp_id] = dp
+        dps.append(dp)
 
-    if dps:
-        return dp
-    else:
-        logger.error("dps configured with no elements in file: {0}".format(config_file))
-        return None
-
-def valve_parser(config_file, logname):
-    dp = dp_parser(config_file, logname)
-    return valve_factory(dp)(dp, logname)
+    return dps
 
 def watcher_parser(config_file, logname):
     logger = get_logger(logname)
@@ -171,7 +161,7 @@ def watcher_parser(config_file, logname):
 
 def _watcher_parser_v1(config_file, logname):
     logger = get_logger(logname)
-    result = {}
+    result = []
 
     INFLUX_KEYS = [
         'influx_db',
@@ -200,9 +190,8 @@ def _watcher_parser_v1(config_file, logname):
             for key in INFLUX_KEYS:
                 port_state_conf[key] = dp.__dict__.get(key, None)
             name = dp.name + '-' + w_type
-            watcher_conf = WatcherConf(name, port_state_conf)
-            watcher = watcher_factory(watcher_conf)(dp, watcher_conf, logname)
-            result[dp_id][w_type] = watcher
+            watcher = WatcherConf(name, port_state_conf)
+            result.append(watcher)
 
         if dp.monitor_ports:
             w_type = 'port_stats'
@@ -216,9 +205,8 @@ def _watcher_parser_v1(config_file, logname):
                 port_stats_conf['db_type'] = 'text'
                 port_stats_conf['file'] = dp.monitor_ports_file
             name = dp.name + '-' + w_type
-            watcher_conf = WatcherConf(name, port_stats_conf)
-            watcher = watcher_factory(watcher_conf)(dp, watcher_conf, logname)
-            result[dp_id][w_type] = watcher
+            watcher = WatcherConf(name, port_stats_conf)
+            result.append(watcher)
 
         if dp.monitor_flow_table:
             w_type = 'flow_table'
@@ -226,16 +214,15 @@ def _watcher_parser_v1(config_file, logname):
             flow_table_conf['interval'] = dp.monitor_flow_table_interval
             flow_table_conf['file'] = dp.monitor_flow_table_file
             name = dp.name + '-' + w_type
-            watcher_conf = WatcherConf(name, flow_table_conf)
-            watcher = watcher_factory(watcher_conf)(dp, watcher_conf, logname)
-            result[dp_id][w_type] = watcher
+            watcher = WatcherConf(name, flow_table_conf)
+            result.append(watcher)
 
     return result
 
 
 def _watcher_parser_v2(conf, logname):
     logger = get_logger(logname)
-    result = {}
+    result = []
 
     dps = {}
     for faucet_file in conf['faucet_configs']:
@@ -254,17 +241,10 @@ def _watcher_parser_v2(conf, logname):
                 continue
 
             dp = dps[dp_name]
-            dp_id = dp.dp_id
-            result.setdefault(dp_id, {})
 
-            watcher_conf = WatcherConf(name, dictionary)
-            watcher_conf.add_db(dbs[watcher_conf.db])
-
-            watcher = watcher_factory(watcher_conf)(dp, watcher_conf, logname)
-            if watcher is None:
-                logging.error('invalid watcher configuration {0} {1}'.format(
-                    dp_name, watcher_conf.name))
-                continue
-            result[dp_id][watcher_conf.type] = watcher
+            watcher = WatcherConf(name, dictionary)
+            watcher.add_db(dbs[watcher_conf.db])
+            watcher.add_dp(dp)
+            result.append(watcher)
 
     return result

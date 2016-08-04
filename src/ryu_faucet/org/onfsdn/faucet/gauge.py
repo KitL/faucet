@@ -30,7 +30,8 @@ from ryu.controller.handler import MAIN_DISPATCHER
 from ryu.controller.handler import set_ev_cls
 from ryu.ofproto import ofproto_v1_3
 
-from faucet_parser import watcher_parser
+from config_parser import watcher_parser
+from watcher import watcher_factory
 
 class EventGaugeReconfigure(event.EventBase):
     pass
@@ -87,7 +88,12 @@ class Gauge(app_manager.RyuApp):
 
         # dict of watchers/handlers:
         # indexed by dp_id and then by name
-        self.watchers = watcher_parser(self.config_file, self.logname)
+        self.watchers = {}
+        confs = watcher_parser(self.config_file, self.logname)
+        for conf in confs:
+            watcher = watcher_factory(conf)(conf, self.logname)
+            self.watchers.setdefault(watcher.dp.dp_id, {})
+            self.watchers[dp_id][watcher.type] = watcher
 
         # Create dpset object for querying Ryu's DPSet application
         self.dpset = kwargs['dpset']

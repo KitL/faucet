@@ -22,7 +22,8 @@ import signal
 
 import ipaddr
 
-from faucet_parser import valve_parser
+from config_parser import dp_parser
+from valve import valve_factory
 from util import kill_on_exception
 
 from ryu.base import app_manager
@@ -107,7 +108,8 @@ class Faucet(app_manager.RyuApp):
         exc_logger.propagate = 1
         exc_logger.setLevel(logging.CRITICAL)
 
-        self.valve = valve_parser(self.config_file, self.logname)
+        dps = dp_parser(self.config_file, self.logname)
+        self.valve = valve_factory(dps[0])(dp, self.logname)
         if self.valve is None:
             self.logger.error('Hardware type not supported')
 
@@ -200,7 +202,7 @@ class Faucet(app_manager.RyuApp):
     @set_ev_cls(EventFaucetReconfigure, MAIN_DISPATCHER)
     def reload_config(self, ev):
         new_config_file = os.getenv('FAUCET_CONFIG', self.config_file)
-        new_dp = valve_parser(new_config_file, self.logname)
+        new_dp = dp_parser(new_config_file, self.logname)[0]
         if new_dp:
             flowmods = self.valve.reload_config(new_dp)
             ryudp = self.dpset.get(new_dp.dp_id)
