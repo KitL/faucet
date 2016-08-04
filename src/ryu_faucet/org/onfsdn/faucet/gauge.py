@@ -93,7 +93,7 @@ class Gauge(app_manager.RyuApp):
         for conf in confs:
             watcher = watcher_factory(conf)(conf, self.logname)
             self.watchers.setdefault(watcher.dp.dp_id, {})
-            self.watchers[dp_id][watcher.type] = watcher
+            self.watchers[watcher.dp.dp_id][watcher.conf.type] = watcher
 
         # Create dpset object for querying Ryu's DPSet application
         self.dpset = kwargs['dpset']
@@ -124,7 +124,14 @@ class Gauge(app_manager.RyuApp):
     @set_ev_cls(EventGaugeReconfigure, MAIN_DISPATCHER)
     def reload_config(self, ev):
         self.config_file = os.getenv('GAUGE_CONFIG', self.config_file)
-        new_watchers = gauge_parser(self.config_file)
+
+        new_confs = watcher_parser(self.config_file, self.logname)
+        new_watchers = {}
+        for conf in new_confs:
+            watcher = watcher_factory(conf)(conf, self.logname)
+            new_watchers.setdefault(watcher.dp.dp_id, {})
+            new_watchers[watcher.dp.dp_id][watcher.conf.type] = watcher
+
         for dp_id, watchers in self.watchers:
             for watcher_type, watcher in watchers:
                 try:

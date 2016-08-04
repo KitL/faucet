@@ -52,8 +52,8 @@ class InfluxShipper(object):
 
 class GaugePortStateLogger(object):
 
-    def __init__(self, dp, conf, logname):
-        self.dp = dp
+    def __init__(self, conf, logname):
+        self.dp = conf.dp
         self.conf = conf
         self.logger = logging.getLogger(
             logname + '.{0}'.format(self.conf.type)
@@ -84,8 +84,8 @@ class GaugePortStateLogger(object):
 
 class GaugePortStateInfluxDBLogger(GaugePortStateLogger, InfluxShipper):
 
-    def __init__(self, dp, conf, logname):
-        super(GaugePortStateInfluxDBLogger, self).__init__(dp, conf, logname)
+    def __init__(self, conf, logname):
+        super(GaugePortStateInfluxDBLogger, self).__init__(conf, logname)
 
     def update(self, rcv_time, msg):
         super(GaugePortStateInfluxDBLogger, self).update(rcv_time, msg)
@@ -115,8 +115,8 @@ class GaugePoller(object):
     The methods send_req, update and no_response should be implemented by
     subclasses.
     """
-    def __init__(self, dp, conf, logname):
-        self.dp = dp
+    def __init__(self, conf, logname):
+        self.dp = conf.dp
         self.conf = conf
         self.thread = None
         self.reply_pending = False
@@ -182,8 +182,8 @@ class GaugePortStatsPoller(GaugePoller):
     """Periodically sends a port stats request to the datapath and parses and
     outputs the response."""
 
-    def __init__(self, dp, conf, logname):
-        super(GaugePortStatsPoller, self).__init__(dp, conf, logname)
+    def __init__(self, conf, logname):
+        super(GaugePortStatsPoller, self).__init__(conf, logname)
 
     def send_req(self):
         ofp = self.ryudp.ofproto
@@ -240,8 +240,8 @@ class GaugePortStatsInfluxDBPoller(GaugePoller, InfluxShipper):
     """Periodically sends a port stats request to the datapath and parses and
     outputs the response."""
 
-    def __init__(self, dp, conf, logname):
-        super(GaugePortStatsInfluxDBPoller, self).__init__(dp, conf, logname)
+    def __init__(self, conf, logname):
+        super(GaugePortStatsInfluxDBPoller, self).__init__(conf, logname)
 
     def send_req(self):
         ofp = self.ryudp.ofproto
@@ -299,8 +299,8 @@ class GaugeFlowTablePoller(GaugePoller):
     flow table is dumped as an OFFlowStatsReply message (in yaml format) that
     matches all flows."""
 
-    def __init__(self, dp, conf, logname):
-        super(GaugeFlowTablePoller, self).__init__(dp, conf, logname)
+    def __init__(self, conf, logname):
+        super(GaugeFlowTablePoller, self).__init__(conf, logname)
 
     def send_req(self):
         ofp = self.ryudp.ofproto

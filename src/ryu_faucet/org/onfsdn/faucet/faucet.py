@@ -108,8 +108,8 @@ class Faucet(app_manager.RyuApp):
         exc_logger.propagate = 1
         exc_logger.setLevel(logging.CRITICAL)
 
-        dps = dp_parser(self.config_file, self.logname)
-        self.valve = valve_factory(dps[0])(dp, self.logname)
+        dp = dp_parser(self.config_file, self.logname)[0]
+        self.valve = valve_factory(dp)(dp, self.logname)
         if self.valve is None:
             self.logger.error('Hardware type not supported')
 

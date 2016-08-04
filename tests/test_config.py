@@ -24,18 +24,16 @@ srcdir = '../src/ryu_faucet/org/onfsdn/faucet'
 sys.path.insert(0, os.path.abspath(os.path.join(testdir, srcdir)))
 
 import unittest
-from faucet_parser import dp_parser, watcher_parser
+from config_parser import dp_parser, watcher_parser
 
 class DistConfigTestCase(unittest.TestCase):
     def setUp(self):
-        self.v1_dp = dp_parser('config/testconfig.yaml', 'test_config')
-        self.v2_dp = dp_parser('config/testconfigv2.yaml', 'test_config')
-        v1_watchers = watcher_parser(
+        self.v1_dp = dp_parser('config/testconfig.yaml', 'test_config')[0]
+        self.v2_dp = dp_parser('config/testconfigv2.yaml', 'test_config')[0]
+        self.v1_watchers = watcher_parser(
             'config/testgaugeconfig.conf', 'test_config')
-        self.v1_watchers = v1_watchers[0xcafef00d]
-        v2_watchers = watcher_parser(
+        self.v2_watchers = watcher_parser(
             'config/testgaugeconfig.yaml', 'test_config')
-        self.v2_watchers = v2_watchers[0xcafef00d]
 
     def test_dps(self):
         for dp in (self.v1_dp, self.v2_dp):
@@ -147,39 +145,46 @@ class DistConfigTestCase(unittest.TestCase):
             self.assertIn(dp.ports[1].acl_in, dp.acls)
 
     def test_gauge_port_stats(self):
-        wv1 = self.v1_watchers['port_stats']
-        wv2 = self.v2_watchers['port_stats']
-        self.assertEqual(wv1.conf.db_type, 'influx')
-        self.assertEqual(wv2.conf.db_type, 'influx')
-        self.assertEqual(wv1.conf.interval, 40)
-        self.assertEqual(wv2.conf.interval, 40)
-        self.assertEqual(wv2.conf.influx_db, 'faucet')
-        self.assertEqual(wv2.conf.influx_host, 'localhost')
-        self.assertEqual(wv2.conf.influx_port, 8086)
-        self.assertEqual(wv2.conf.influx_user, 'kit')
-        self.assertEqual(wv2.conf.influx_pwd, 'password')
-        self.assertEqual(wv2.conf.influx_timeout, 10)
+        for watcher in self.v1_watchers:
+            if watcher.type == 'port_stats':
+                wv1 = watcher
+        for watcher in self.v2_watchers:
+            if watcher.type == 'port_stats':
+                wv2 = watcher
+        self.assertEqual(wv1.db_type, 'influx')
+        self.assertEqual(wv2.db_type, 'influx')
+        self.assertEqual(wv1.interval, 40)
+        self.assertEqual(wv2.interval, 40)
+        self.assertEqual(wv2.influx_db, 'faucet')
+        self.assertEqual(wv2.influx_host, 'localhost')
+        self.assertEqual(wv2.influx_port, 8086)
+        self.assertEqual(wv2.influx_user, 'kit')
+        self.assertEqual(wv2.influx_pwd, 'password')
+        self.assertEqual(wv2.influx_timeout, 10)
 
     def test_gauge_port_state(self):
-        wv1 = self.v1_watchers['port_state']
-        wv2 = self.v2_watchers['port_state']
-        self.assertEqual(wv1.conf.db_type, 'influx')
-        self.assertEqual(wv2.conf.db_type, 'influx')
-        self.assertEqual(wv2.conf.influx_db, 'faucet')
-        self.assertEqual(wv2.conf.influx_host, 'localhost')
-        self.assertEqual(wv2.conf.influx_port, 8086)
-        self.assertEqual(wv2.conf.influx_user, 'kit')
-        self.assertEqual(wv2.conf.influx_pwd, 'password')
-        self.assertEqual(wv2.conf.influx_timeout, 10)
+        for watcher in self.v1_watchers:
+            if watcher.type == 'port_state':
+                wv1 = watcher
+        for watcher in self.v2_watchers:
+            if watcher.type == 'port_state':
+                wv2 = watcher
+        self.assertEqual(wv1.db_type, 'influx')
+        self.assertEqual(wv2.db_type, 'influx')
+        self.assertEqual(wv2.influx_db, 'faucet')
+        self.assertEqual(wv2.influx_host, 'localhost')
+        self.assertEqual(wv2.influx_port, 8086)
+        self.assertEqual(wv2.influx_user, 'kit')
+        self.assertEqual(wv2.influx_pwd, 'password')
+        self.assertEqual(wv2.influx_timeout, 10)
 
     def test_gauge_flow_table(self):
-        for watcher in (
-                self.v1_watchers['flow_table'],
-                self.v2_watchers['flow_table']
-                ):
-            self.assertEqual(watcher.conf.db_type, 'text')
-            self.assertEqual(watcher.conf.interval, 40)
-            self.assertEqual(watcher.conf.file, 'flow_table.JSON')
+        for watcher in self.v1_watchers + self.v2_watchers:
+            if watcher.type != 'flow_table':
+                continue
+            self.assertEqual(watcher.db_type, 'text')
+            self.assertEqual(watcher.interval, 40)
+            self.assertEqual(watcher.file, 'flow_table.JSON')
 
 if __name__ == "__main__":
     unittest.main()

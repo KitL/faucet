@@ -155,8 +155,10 @@ def watcher_parser(config_file, logname):
     conf = read_config(config_file, logname)
     if isinstance(conf, dict):
         # in this case it may be an old style config
+        print "v2"
         return _watcher_parser_v2(conf, logname)
     else:
+        print "v1"
         return _watcher_parser_v1(config_file, logname)
 
 def _watcher_parser_v1(config_file, logname):
@@ -175,12 +177,9 @@ def _watcher_parser_v1(config_file, logname):
     dps = []
     with open(config_file, 'r') as conf:
         for line in conf:
-            dps.append(dp_parser(line.strip(), logname))
+            dps.append(dp_parser(line.strip(), logname)[0])
 
     for dp in dps:
-        dp_id = dp.dp_id
-        result.setdefault(dp_id, {})
-
         if dp.influxdb_stats:
             w_type = 'port_state'
             port_state_conf = {
@@ -226,8 +225,9 @@ def _watcher_parser_v2(conf, logname):
 
     dps = {}
     for faucet_file in conf['faucet_configs']:
-        dp = dp_parser(faucet_file, logname)
-        dps[dp.name] = dp
+        dp_list = dp_parser(faucet_file, logname)
+        for dp in dp_list:
+            dps[dp.name] = dp
 
     dbs = conf.pop('dbs')
 
@@ -243,7 +243,7 @@ def _watcher_parser_v2(conf, logname):
             dp = dps[dp_name]
 
             watcher = WatcherConf(name, dictionary)
-            watcher.add_db(dbs[watcher_conf.db])
+            watcher.add_db(dbs[watcher.db])
             watcher.add_dp(dp)
             result.append(watcher)
 
