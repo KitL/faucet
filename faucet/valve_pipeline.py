@@ -39,8 +39,8 @@ class ValvePipeline(ValveManagerBase):
         self.egress_table = None
         if dp.egress_pipeline:
             self.egress_table = dp.tables['egress']
-        self.filter_priority = dp.highest_priority + 1
-        self.select_priority = dp.highest_priority
+        self.filter_priority = self._FILTER_PRIORITY
+        self.select_priority = self._HIGH_PRIORITY
 
     def accept_to_l2_forwarding(self, actions=None):
         """Get instructions to forward packet through the pipeline to l2
